@@ -1,7 +1,7 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { saveSelfReview, saveManagerReview, signOffReview, acknowledgeReview, returnReviewToManager, reassignReviewer, resolveReviewDispute, reopenDisputedReview, setReviewReviewers, type EligibleEmployee, type EmployeeResponse, type ReviewView } from "@/server/performance";
@@ -318,7 +318,7 @@ export function ReviewFormClient({ view, people }: { view: ReviewView; people: E
               title={dirty ? "Saves your changes as a draft, then downloads the PDF" : "Download this review as a PDF on the company letterhead"}>
               {downloading ? <Loader2Icon className="h-3.5 w-3.5 animate-spin" /> : <DownloadIcon className="h-3.5 w-3.5" />}PDF
             </Button>
-            <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={view.role === "hr" ? "/dashboard/human-resources/performance/periods" : view.role === "reviewer" ? "/dashboard/human-resources/performance/team" : "/dashboard/human-resources/performance"}><ArrowLeftIcon className="h-3.5 w-3.5" />Back</Link></Button>
+            <BackButton fallback={view.role === "hr" ? "/dashboard/human-resources/performance/periods" : view.role === "reviewer" ? "/dashboard/human-resources/performance/team" : "/dashboard/human-resources/performance"} variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Back</BackButton>
           </div>
         }
       />

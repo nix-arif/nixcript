@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -279,7 +280,7 @@ export function EditPurchaseOrderClient({
         title={`Edit ${order.poNo}`}
         description="Update draft supplier PO"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push(backUrl)} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, backUrl)} className="gap-2">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }

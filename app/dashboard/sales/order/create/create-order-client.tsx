@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect, useId } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -1500,7 +1501,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         title="New Sales Order"
         description="Create a new sales order"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/sales/order")} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/sales/order")} className="gap-2">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }

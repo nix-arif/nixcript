@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -314,7 +315,8 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
   async function handleCancel() {
     if (!confirm("Cancel this requisition?")) return;
     await act("cancel", async () => {
-      await cancelPurchaseRequisition(pr.id);
+      const res = await cancelPurchaseRequisition(pr.id);
+      if (!res.ok) throw new Error(res.error);
       toast.success("Requisition cancelled");
     });
   }
@@ -323,7 +325,14 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
     if (!confirm(`Delete ${pr.prNo}? This cannot be undone.`)) return;
     setActioning("delete");
     try {
-      await deletePurchaseRequisition(pr.id);
+      const res = await deletePurchaseRequisition(pr.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        setActioning(null);
+        return;
+      }
+      toast.success("Requisition deleted");
+      router.push("/dashboard/procurement/requisition");
     } catch (e: any) {
       toast.error(e.message);
       setActioning(null);
@@ -422,7 +431,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
         description={`Purchase Requisition · ${fmtDate(pr.createdAt)}`}
         action={
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => router.back()}>
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => navigateBack(router, "/dashboard/procurement/requisition")}>
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             {canEdit && !editing && (

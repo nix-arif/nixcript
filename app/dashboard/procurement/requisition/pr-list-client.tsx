@@ -63,9 +63,15 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
     if (!confirm(`Delete requisition ${prNo}? This cannot be undone.`)) return;
     setDeletingId(id);
     try {
-      await deletePurchaseRequisition(id);
+      const res = await deletePurchaseRequisition(id);
+      if (!res.ok) toast.error(res.error);
+      else {
+        toast.success("Requisition deleted");
+        router.refresh();
+      }
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
       setDeletingId(null);
     }
   }

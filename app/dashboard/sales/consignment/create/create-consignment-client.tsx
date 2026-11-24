@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -100,7 +101,7 @@ export function CreateConsignmentClient({ so }: Props) {
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
       <button
-        onClick={() => router.push(`/dashboard/sales/order/${so.id}`)}
+        onClick={() => navigateBack(router, `/dashboard/sales/order/${so.id}`)}
         className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeftIcon className="h-4 w-4" />

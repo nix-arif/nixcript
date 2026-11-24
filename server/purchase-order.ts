@@ -2027,7 +2027,11 @@ export async function recallPurchaseOrder(id: string): Promise<{ ok: true } | { 
   const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
   if (po.status !== "confirmed") return { ok: false, error: "Only confirmed purchase orders can be recalled" };
-  await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "recall");
+  try {
+    await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "recall");
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "You can't recall this document" };
+  }
 
   const downstream = await activePurchaseOrderDownstream(orgId, id);
   if (downstream.length > 0) {

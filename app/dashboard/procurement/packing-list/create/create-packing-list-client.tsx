@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -242,7 +243,7 @@ export function CreatePackingListClient({ suppliers, initialSupplierId, initialP
         title="New Packing List"
         description="What a supplier says they're shipping, before it physically arrives"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/procurement/packing-list")} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/procurement/packing-list")} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }

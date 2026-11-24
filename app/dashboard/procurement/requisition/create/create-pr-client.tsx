@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -588,7 +589,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
         title="New Purchase Requisition"
         action={
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => router.back()}>
+            <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => navigateBack(router, "/dashboard/procurement/requisition")}>
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             <Button variant="outline" size="sm" onClick={() => handleSave(false)} disabled={savingMode !== null}>

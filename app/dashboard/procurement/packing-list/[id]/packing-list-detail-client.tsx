@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -377,7 +378,7 @@ export function PackingListDetailClient({
         description={`Packing List${organizationName ? ` · ${organizationName}` : ""} · ${fmtDate(pl.createdAt)}`}
         action={
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             <Button size="sm" variant="outline" className="gap-1.5" disabled={downloadingPdf} onClick={handleDownloadPdf}>

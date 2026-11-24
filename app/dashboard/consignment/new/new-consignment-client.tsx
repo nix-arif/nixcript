@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -76,7 +77,7 @@ export function NewConsignmentClient({ options, soId, soNo }: { options: Options
       <PageHeader
         title="New consignment"
         description={`Send ${options.ownerName} stock to an agent or a customer — it stays ${options.ownerName}'s until it's used`}
-        action={<Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
+        action={<Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/consignment")} className="gap-1.5"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
       />
 
       <div className="space-y-4">

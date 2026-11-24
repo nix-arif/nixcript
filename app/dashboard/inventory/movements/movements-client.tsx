@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useTransition, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -409,7 +410,7 @@ export function MovementsClient({ movements, warehouses, permissions, isOwner, l
   return (
     <div className="p-6 flex flex-col gap-6">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => router.push("/dashboard/inventory")} className="h-8 w-8">
+        <Button variant="ghost" size="icon" onClick={() => navigateBack(router, "/dashboard/inventory")} className="h-8 w-8">
           <ArrowLeftIcon className="h-4 w-4"/>
         </Button>
         <div>

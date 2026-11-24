@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -95,7 +96,7 @@ export function RecordLeaveClient({ members, types }: { members: Member[]; types
           <h1 className="text-xl font-semibold flex items-center gap-2"><ClipboardPenIcon className="h-5 w-5 text-muted-foreground" />Record leave for a member</h1>
           <p className="text-sm text-muted-foreground mt-1">For leave a member took but didn&apos;t apply for in the system — e.g. an MC sent by email. It is approved on saving, marked <b>Recorded by HR</b>, deducted from their balance, and the member is notified. Unauthorised absence: record it as Unpaid Leave.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5 shrink-0"><ArrowLeftIcon className="w-3.5 h-3.5" />Back</Button>
+        <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/human-resources/leave/approvals")} className="gap-1.5 shrink-0"><ArrowLeftIcon className="w-3.5 h-3.5" />Back</Button>
       </div>
 
       <section className="border rounded-xl p-4 grid sm:grid-cols-2 gap-4">

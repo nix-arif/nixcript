@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -384,7 +385,7 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => router.push("/dashboard/ledger/entries")}
+            onClick={() => navigateBack(router, "/dashboard/ledger/entries")}
             className="h-8 w-8 p-0"
           >
             <ArrowLeftIcon className="h-4 w-4" />

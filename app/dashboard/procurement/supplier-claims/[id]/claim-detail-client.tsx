@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -86,7 +87,7 @@ export function ClaimDetailClient({ claim }: { claim: SupplierClaimDetail }) {
         description={`${claim.supplierName} · ${situationLabel(claim.situation)}`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href="/dashboard/procurement/supplier-claims"><ArrowLeftIcon className="h-3.5 w-3.5" />Claims</Link></Button>
+            <BackButton fallback="/dashboard/procurement/supplier-claims" variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Claims</BackButton>
             <Button asChild variant="outline" size="sm" className="gap-1.5"><a href={`/api/supplier-claims/${claim.id}/report`}><DownloadIcon className="h-3.5 w-3.5" />Claim PDF</a></Button>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void copyMessage()}><ClipboardCopyIcon className="h-3.5 w-3.5" />Copy message</Button>
           </div>

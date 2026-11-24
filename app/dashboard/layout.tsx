@@ -3,6 +3,7 @@ import { DashboardBreadcrumb } from "@/components/dashboard-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
 import { NavigationLoader } from "./_navigation-loader";
 import { LiveRefresh } from "@/components/live-refresh";
+import { NavHistoryTracker } from "@/components/nav-history-tracker";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -60,6 +61,7 @@ export default async function DashboardLayout({
         <div className="flex flex-1 flex-col min-h-0 min-w-0">
           <NavigationLoader>{children}</NavigationLoader>
           <LiveRefresh />
+          <NavHistoryTracker />
         </div>
       </SidebarInset>
     </SidebarProvider>

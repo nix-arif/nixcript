@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -83,7 +84,7 @@ export function PeriodDetailClient({ period, employees }: { period: PeriodDetail
         description={`${fmt(period.startDate)} to ${fmt(period.endDate)} · ${done} of ${live.length} completed`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href="/dashboard/human-resources/performance/periods"><ArrowLeftIcon className="h-3.5 w-3.5" />Periods</Link></Button>
+            <BackButton fallback="/dashboard/human-resources/performance/periods" variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Periods</BackButton>
             {open && waiting > 0 && <Button size="sm" variant="outline" className="gap-1.5" disabled={busy} onClick={remind}><BellRingIcon className="h-3.5 w-3.5" />Remind {waiting} waiting</Button>}
             <Button size="sm" variant="outline" className="gap-1.5" onClick={exportCsv}><DownloadIcon className="h-3.5 w-3.5" />Export</Button>
             {open && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setPicked({}); setAddOpen(true); }}><PlusIcon className="h-3.5 w-3.5" />Add people</Button>}

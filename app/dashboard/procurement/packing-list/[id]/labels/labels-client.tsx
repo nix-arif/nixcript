@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -314,7 +315,7 @@ export function LabelsClient({
         description={`${packingListNo} · ${sheet.length} sticker${sheet.length === 1 ? "" : "s"}`}
         action={
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/packing-list/${packingListId}`)}>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigateBack(router, `/dashboard/procurement/packing-list/${packingListId}`)}>
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             {canSave && (

@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { pricingMethodLabel } from "@/lib/intercompany/methods";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -447,7 +448,7 @@ export function PurchaseOrderDetailClient({
         description={`Supplier PO${organizationName ? ` · ${organizationName}` : ""} · ${fmtDate(order.createdAt)}`}
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             {isDraft && (editHref ? true : can("purchase-order:update")) && (

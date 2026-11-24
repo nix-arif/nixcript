@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -147,7 +148,7 @@ export function IssueFormClient({ suppliers, issue }: { suppliers: { id: string;
       <PageHeader
         title={editing ? `Edit ${issue!.issueNo}` : "Report a customer issue"}
         description="Record what the customer reported, which delivered units are affected, and where they came from"
-        action={<Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={back}><ArrowLeftIcon className="h-3.5 w-3.5" />Back</Link></Button>}
+        action={<BackButton fallback={back} variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Back</BackButton>}
       />
 
       {/* 1. the delivery */}

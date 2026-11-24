@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { INTENDED_USE_LABELS, isLendable, unitUseLabel, LOAN_PURPOSE_LABELS } from "@/lib/inventory/constants";
 import { getCaseTemplatesForCustomer, getProductsMda, saveCaseTemplate, type CaseTemplateRow } from "@/server/case-template";
 import type { CustomerView } from "@/lib/delivery/customer-view";
@@ -294,7 +295,7 @@ function SoPicker({ onSelect }: SoPickerProps) {
         title="New Delivery Order"
         description="Select a confirmed Sales Order to create a delivery against"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/delivery")} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }
@@ -378,7 +379,7 @@ function ModeSelector({ onSelect }: { onSelect: (mode: "case" | "so") => void })
         title="New Delivery Order"
         description="Choose the type of delivery order to create."
         action={
-          <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/delivery")} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }
@@ -562,7 +563,7 @@ function DoForm({ prefill, categories = [] }: { prefill: PrefillData; categories
         title="New Delivery Order"
         description="Create a delivery order for a customer shipment"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/delivery")} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }
@@ -1714,7 +1715,7 @@ function CaseDoForm({ categories = [], currentUserId = "", currentUserName = "",
           ? "After the case: tick what was actually used from the specialist's field stock. Stock is deducted when you record."
           : "Customer items (from the doctor's template) go on the customer copy and the invoice; the items actually used are recorded after the case."}
         action={
-          <Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/delivery")} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }

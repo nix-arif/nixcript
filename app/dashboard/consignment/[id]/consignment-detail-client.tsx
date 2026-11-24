@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -103,7 +104,7 @@ export function ConsignmentDetailClient({ data }: { data: ConsignmentDetail }) {
       <PageHeader
         title={h.consignmentNo}
         description={`${isCustomer ? "Customer" : isPartner ? (isSalesAgent ? "Sales agent" : "Dealer") : "Agent"} consignment · owned by ${h.ownerName}`}
-        action={<Button variant="outline" size="sm" onClick={() => router.back()} className="gap-1.5"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
+        action={<Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/consignment")} className="gap-1.5"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
       />
 
       {/* Summary */}

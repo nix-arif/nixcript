@@ -5,12 +5,23 @@
 // and the centralized twin). The detail page keeps only the compact Progress
 // summary, built from the same trailStates() so the two never disagree.
 
+import { navigateBack } from "@/hooks/use-back";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   ArrowLeftIcon, CheckIcon, AlertCircleIcon,
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
   BanknoteIcon, ExternalLinkIcon, PlusIcon, Link2Icon,
+  MoreHorizontalIcon, RotateCcwIcon, XIcon, TrashIcon, Loader2Icon,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { recallSalesOrder, cancelSalesOrder, deleteSalesOrder } from "@/server/sales-order";
+import { recallPurchaseOrder, cancelPurchaseOrder, deletePurchaseOrder } from "@/server/purchase-order";
+import { recallPurchaseRequisition, cancelPurchaseRequisition, deletePurchaseRequisition } from "@/server/purchase-requisition";
+import type { TrailAction, TrailActionKind, TrailActionMap } from "@/server/trail-actions";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CustomerPoTrackingData, IntercompanyLeg } from "@/server/customer-purchase-order";
@@ -33,11 +44,17 @@ export const CPO_STATUS: Record<string, { label: string; color: string }> = {
 };
 const SO_STATUS: Record<string, { label: string; color: string }> = {
   draft:     { label: "Draft",      color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
+  // same wording and colours as the SO page
+  "pending-do": { label: "Pending DO", color: "bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-400" },
+  "pending-pr": { label: "Pending PR", color: "bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400" },
   submitted: { label: "Submitted",  color: "bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400" },
   confirmed: { label: "Confirmed",  color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled",  color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
   cancelled: { label: "Cancelled",  color: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
 };
+const soStatusCfg = (status: string) =>
+  SO_STATUS[status] ?? { label: status.replace(/[-_]/g, " ").replace(/^\w/, (c) => c.toUpperCase()), color: SO_STATUS.draft.color };
+
 const PO_STATUS: Record<string, { label: string; color: string }> = {
   draft:        { label: "Draft",      color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
   submitted:    { label: "Submitted",  color: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" },
@@ -133,15 +150,64 @@ function TrailStep({
 }
 
 // ── Document card inside a step ────────────────────────────────────────────
+const ACTION_META: Record<TrailActionKind, { label: string; icon: React.ElementType; destructive?: boolean }> = {
+  recall: { label: "Recall to draft", icon: RotateCcwIcon },
+  cancel: { label: "Cancel", icon: XIcon, destructive: true },
+  delete: { label: "Delete", icon: TrashIcon, destructive: true },
+};
+
+// The "⋯" menu on a trail card: available actions run; blocked ones stay
+// visible but disabled with the reason, so nobody wonders why it's missing.
+function DocActionsMenu({ actions, busy, onAction }: { actions: TrailAction[]; busy: boolean; onAction: (kind: TrailActionKind) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          disabled={busy}
+          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+          aria-label="Document actions"
+        >
+          {busy ? <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> : <MoreHorizontalIcon className="w-3.5 h-3.5" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72" onClick={(e) => e.stopPropagation()}>
+        {actions.map((a) => {
+          const meta = ACTION_META[a.kind];
+          const Icon = meta.icon;
+          return (
+            <DropdownMenuItem
+              key={a.kind}
+              disabled={!a.allowed}
+              variant={meta.destructive && a.allowed ? "destructive" : "default"}
+              onClick={() => a.allowed && onAction(a.kind)}
+              className="items-start"
+            >
+              <Icon className="w-3.5 h-3.5 mt-0.5" />
+              <div className="min-w-0">
+                <div className="text-xs font-medium">{meta.label}</div>
+                {!a.allowed && a.reason && <div className="text-[10px] leading-snug text-muted-foreground whitespace-normal">{a.reason}</div>}
+              </div>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function DocCard({
-  docNo, statusLabel, statusColor, meta, href, onClick,
+  docNo, statusLabel, statusColor, meta, onClick, actions, busy = false, onAction,
 }: {
   docNo: string;
   statusLabel: string;
   statusColor: string;
   meta?: React.ReactNode;
-  href?: string;
   onClick?: () => void;
+  actions?: TrailAction[];
+  busy?: boolean;
+  onAction?: (kind: TrailActionKind) => void;
 }) {
   return (
     <div
@@ -155,6 +221,7 @@ function DocCard({
       <StatusBadge label={statusLabel} color={statusColor} />
       {meta && <div className="text-[11px] text-muted-foreground shrink-0">{meta}</div>}
       {onClick && <ExternalLinkIcon className="w-3 h-3 text-muted-foreground shrink-0" />}
+      {actions && actions.length > 0 && onAction && <DocActionsMenu actions={actions} busy={busy} onAction={onAction} />}
     </div>
   );
 }
@@ -194,16 +261,16 @@ export function trailStates(data: Data) {
 
   // Requisitions: the purchase_requisition table (PRs raised from the SO),
   // plus legacy ones kept as draft/submitted rows of purchase_order.
-  const prList: { id: string; no: string; status: string; createdAt: Date; href: string; cfg: { label: string; color: string } }[] = [
+  const prList: { id: string; kind: "pr" | "po"; no: string; status: string; createdAt: Date; href: string; cfg: { label: string; color: string } }[] = [
     ...requisitions.map((r) => ({
-      id: r.id, no: r.prNo, status: r.status, createdAt: r.createdAt,
+      id: r.id, kind: "pr" as const, no: r.prNo, status: r.status, createdAt: r.createdAt,
       href: `/dashboard/procurement/requisition/${r.id}`,
       cfg: PR_STATUS[r.status] ?? PR_STATUS.draft,
     })),
     ...internalPos
       .filter((p) => p.status === "draft" || p.status === "submitted")
       .map((p) => ({
-        id: p.id, no: p.prNo ?? p.poNo ?? p.id, status: p.status, createdAt: p.createdAt,
+        id: p.id, kind: "po" as const, no: p.prNo ?? p.poNo ?? p.id, status: p.status, createdAt: p.createdAt,
         href: `/dashboard/procurement/purchase-order/${p.id}`,
         cfg: PO_STATUS[p.status] ?? PO_STATUS.draft,
       })),
@@ -254,7 +321,7 @@ function legState(leg: IntercompanyLeg): StepState {
 // centralized pages and only appear when the viewer may use them.
 function IntercompanyLegBody({ leg }: { leg: IntercompanyLeg }) {
   const router = useRouter();
-  const soCfg = leg.so ? (SO_STATUS[leg.so.status] ?? SO_STATUS.draft) : null;
+  const soCfg = leg.so ? soStatusCfg(leg.so.status) : null;
   return (
     <div className="border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-900/10 rounded-lg p-3 space-y-3">
       <p className="text-[11px] text-muted-foreground">
@@ -324,14 +391,51 @@ export function FulfilmentTrailClient({
   permissions,
   backHref,
   organizationName,
+  actions = null,
 }: {
   data: Data;
   permissions: string[];
   // The CPO's own detail page (plain or centralized).
   backHref: string;
   organizationName?: string;
+  // Recall / Cancel / Delete per document (server/trail-actions.ts). Null on
+  // the centralized view: the actions work on the active org's documents only.
+  actions?: TrailActionMap | null;
 }) {
   const router = useRouter();
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Runs one trail action: confirm, call the same server action the document
+  // page uses (it re-checks every rule), then reload the trail.
+  async function runAction(doc: "so" | "pr" | "po", id: string, docNo: string, kind: TrailActionKind) {
+    const prompts: Record<TrailActionKind, string> = {
+      recall: `Recall ${docNo} back to draft?`,
+      cancel: doc === "po"
+        ? `Cancel ${docNo}? If it was issued to one of your other companies, the sales order they got from it is cancelled too.`
+        : `Cancel ${docNo}? It stays on record as cancelled.`,
+      delete: `Delete ${docNo}? This removes it permanently and can't be undone.`,
+    };
+    if (!confirm(prompts[kind])) return;
+    const run = {
+      so: { recall: recallSalesOrder, cancel: cancelSalesOrder, delete: deleteSalesOrder },
+      pr: { recall: recallPurchaseRequisition, cancel: cancelPurchaseRequisition, delete: deletePurchaseRequisition },
+      po: { recall: recallPurchaseOrder, cancel: cancelPurchaseOrder, delete: deletePurchaseOrder },
+    }[doc][kind];
+    setBusyId(id);
+    try {
+      const res = await run(id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`${docNo} ${kind === "recall" ? "recalled to draft" : kind === "cancel" ? "cancelled" : "deleted"}`);
+      router.refresh();
+    } catch {
+      toast.error("Something went wrong — please try again");
+    } finally {
+      setBusyId(null);
+    }
+  }
   const { cpo, so, dos, invoices } = data;
   const snap = cpo.customerSnapshot as { name?: string; organizationName?: string } | null;
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
@@ -343,7 +447,7 @@ export function FulfilmentTrailClient({
       {/* ── Header ── */}
       <div>
         <div className="flex items-center gap-2 mb-1">
-          <Button variant="ghost" size="icon" className="w-7 h-7 -ml-1.5" onClick={() => router.push(backHref)}>
+          <Button variant="ghost" size="icon" className="w-7 h-7 -ml-1.5" onClick={() => navigateBack(router, backHref)}>
             <ArrowLeftIcon className="w-3.5 h-3.5" />
           </Button>
           <h1 className="text-lg font-bold">
@@ -382,10 +486,13 @@ export function FulfilmentTrailClient({
               <>
                 <DocCard
                   docNo={so.soNo}
-                  statusLabel={(SO_STATUS[so.status] ?? SO_STATUS.draft).label}
-                  statusColor={(SO_STATUS[so.status] ?? SO_STATUS.draft).color}
+                  statusLabel={soStatusCfg(so.status).label}
+                  statusColor={soStatusCfg(so.status).color}
                   meta={fmtDate(so.createdAt)}
                   onClick={() => router.push(`/dashboard/sales/order/${so.id}`)}
+                  actions={actions?.so}
+                  busy={busyId === so.id}
+                  onAction={(k) => runAction("so", so.id, so.soNo, k)}
                 />
                 <div className="flex gap-4 mt-1.5 pl-1 text-xs text-muted-foreground">
                   <span>Value: {fmt(so.grandTotal)}</span>
@@ -423,6 +530,9 @@ export function FulfilmentTrailClient({
                     statusColor={r.cfg.color}
                     meta={fmtDate(r.createdAt)}
                     onClick={() => router.push(r.href)}
+                    actions={r.kind === "pr" ? actions?.prs[r.id] : actions?.pos[r.id]}
+                    busy={busyId === r.id}
+                    onAction={(k) => runAction(r.kind, r.id, r.no, k)}
                   />
                 ))}
               </div>
@@ -449,6 +559,9 @@ export function FulfilmentTrailClient({
                       statusColor={cfg.color}
                       meta={fmtDate(po.createdAt)}
                       onClick={() => router.push(`/dashboard/procurement/purchase-order/${po.id}`)}
+                      actions={actions?.pos[po.id]}
+                      busy={busyId === po.id}
+                      onAction={(k) => runAction("po", po.id, po.poNo ?? po.prNo ?? po.id, k)}
                     />
                   );
                 })}

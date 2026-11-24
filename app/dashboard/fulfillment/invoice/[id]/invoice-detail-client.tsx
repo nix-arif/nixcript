@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -145,7 +146,7 @@ export function InvoiceDetailClient({
         description={fmtDate(invoice.invoiceDate ?? invoice.createdAt)}
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/invoice")} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/invoice")} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             {can("invoice:update") && (

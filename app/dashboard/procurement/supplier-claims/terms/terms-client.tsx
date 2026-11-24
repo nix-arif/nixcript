@@ -1,7 +1,7 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useState } from "react";
-import Link from "next/link";
 import { toast } from "sonner";
 import { getSupplierTerms, saveSupplierClaimTerms, type SupplierTerms } from "@/server/post-delivery";
 import { BASES, SITUATIONS, SITUATION_KEYS, situationLabel, type Basis } from "@/lib/post-delivery/core";
@@ -46,7 +46,7 @@ export function TermsClient({ initial }: { initial: SupplierTerms[] }) {
       <PageHeader
         title="Claim terms"
         description="How long each supplier accepts a claim, and counted from which date. A claim's deadline is worked out from these."
-        action={<Button asChild variant="outline" size="sm" className="gap-1.5"><Link href="/dashboard/procurement/supplier-claims"><ArrowLeftIcon className="h-3.5 w-3.5" />Claims</Link></Button>}
+        action={<BackButton fallback="/dashboard/procurement/supplier-claims" variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Claims</BackButton>}
       />
       <p className="mb-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
         Suppliers differ, so each has its own terms. Enter a general term (for example <b>30 days from the date we received the goods</b>), and add a different one for a kind of problem when the supplier treats it differently (for example <b>365 days from delivery</b> for failures in use). The terms are copied into a claim when it is raised.

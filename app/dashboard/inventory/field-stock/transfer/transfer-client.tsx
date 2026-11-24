@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import Link from "next/link";
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
@@ -380,7 +381,7 @@ export function TransferClient({ reps, mainWarehouseLabel, partners, initialRepI
         title="Field Stock Transfer"
         description="Move stock between the main warehouse and a sales rep's field holding."
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/inventory/field-stock")} className="gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/inventory/field-stock")} className="gap-2">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }

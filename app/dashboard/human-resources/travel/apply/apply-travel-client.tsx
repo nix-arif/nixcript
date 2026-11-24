@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useState, useRef, useId, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -306,9 +307,7 @@ export function ApplyTravelClient({ ratePerKm, draft }: Props) {
   return (
     <div className="p-6 flex flex-col gap-6">
       <div className="flex items-start gap-3">
-        <Link href="/dashboard/human-resources/travel">
-          <Button variant="ghost" size="icon" className="mt-0.5 shrink-0"><ArrowLeftIcon className="h-4 w-4"/></Button>
-        </Link>
+        <BackButton fallback="/dashboard/human-resources/travel" variant="ghost" size="icon" className="mt-0.5 shrink-0"><ArrowLeftIcon className="h-4 w-4"/></BackButton>
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold flex items-center gap-2">
             <RouteIcon className="h-5 w-5 text-muted-foreground"/>

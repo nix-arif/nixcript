@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -570,7 +571,7 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
             variant="ghost"
             size="sm"
             className="h-8 w-8 p-0"
-            onClick={() => router.push(`/dashboard/sales/quotation/${q.id}`)}
+            onClick={() => navigateBack(router, `/dashboard/sales/quotation/${q.id}`)}
           >
             <ArrowLeftIcon className="w-4 h-4" />
           </Button>

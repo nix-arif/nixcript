@@ -1634,7 +1634,11 @@ export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok:
 
   if (!so) return { ok: false, error: "Sales order not found" };
   if (so.status !== "confirmed") return { ok: false, error: "Only confirmed orders can be recalled" };
-  await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "recall");
+  try {
+    await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "recall");
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "You can't recall this document" };
+  }
 
   const downstream = await activeSalesOrderDownstream(orgId, id);
   if (downstream.length > 0) {

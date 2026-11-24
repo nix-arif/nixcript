@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -561,7 +562,7 @@ export function InspectPackingListClient({
 
   async function goBack() {
     if (!(await flushSaves()) && !confirm("Some lines aren't saved. Leave anyway?")) return;
-    router.push(backUrl);
+    navigateBack(router, backUrl);
   }
 
   function handleFocusRow(itemId: string) {

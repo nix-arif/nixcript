@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useOpenedFromList } from "@/lib/use-list-return";
@@ -152,8 +153,9 @@ export function DeliveryOrderDetailClient({
   // an edit) go to the list URL last used, filters included.
   const listReturn = useOpenedFromList("do-list", `/dashboard/fulfillment/delivery/${order.id}`, "/dashboard/fulfillment/delivery");
   const goBack = () => {
+    // back to the list with its filters kept; otherwise wherever we came from
     if (listReturn.fromList) router.back();
-    else router.push(listReturn.listUrl);
+    else navigateBack(router, listReturn.listUrl);
   };
   const [status, setStatus] = useState(order.status ?? "draft");
   const [doNo, setDoNo] = useState(order.doNo);

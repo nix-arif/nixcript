@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -157,7 +158,7 @@ function DoPicker({ pendingDos, onSkip }: {
         title="New Invoice"
         description="Select a delivered order to invoice, or create a standalone invoice"
         action={
-          <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/invoice")} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/invoice")} className="gap-1.5">
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
           </Button>
         }
@@ -543,7 +544,7 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
       <PageHeader
         title="New Invoice"
         description={orgName ? `Creating invoice for ${orgName}` : "Create a tax invoice for a customer"}
-        action={<Button variant="outline" size="sm" onClick={() => router.push("/dashboard/fulfillment/invoice")} className="gap-2"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
+        action={<Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/fulfillment/invoice")} className="gap-2"><ArrowLeftIcon className="w-3.5 h-3.5" /> Back</Button>}
       />
 
       <div className="space-y-6">

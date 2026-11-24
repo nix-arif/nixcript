@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -191,11 +192,9 @@ export function ApplyLeaveClient({ leaveTypes, balances }: Props) {
     <div className="p-6 flex flex-col gap-6">
       {/* Header */}
       <div className="flex items-start gap-3">
-        <Link href="/dashboard/human-resources/leave">
-          <Button variant="ghost" size="icon" className="mt-0.5 shrink-0">
+        <BackButton fallback="/dashboard/human-resources/leave" variant="ghost" size="icon" className="mt-0.5 shrink-0">
             <ArrowLeftIcon className="h-4 w-4" />
-          </Button>
-        </Link>
+          </BackButton>
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold flex items-center gap-2">
             <FilePlusIcon className="h-5 w-5 text-muted-foreground" />

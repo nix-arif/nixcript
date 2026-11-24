@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -138,7 +139,7 @@ export function CustomerPoSummaryClient({ rows }: { rows: CustomerPoSummaryRow[]
         description="Full-process status for all customer purchase orders"
         action={
           <Button variant="outline" size="sm" className="gap-1.5"
-            onClick={() => router.push("/dashboard/sales/customer-po")}>
+            onClick={() => navigateBack(router, "/dashboard/sales/customer-po")}>
             <ArrowLeftIcon className="w-3.5 h-3.5" /> Back to list
           </Button>
         }

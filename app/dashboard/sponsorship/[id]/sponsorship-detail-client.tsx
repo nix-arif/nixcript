@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -79,7 +80,7 @@ export function SponsorshipDetailClient({ d }: { d: SponsorshipDetailData }) {
         description={`${d.sponsorshipNo} · requested by ${d.requestedByName ?? "—"}`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={d.isMine ? "/dashboard/sponsorship" : "/dashboard/sponsorship/approvals"}><ArrowLeftIcon className="h-3.5 w-3.5" />Back</Link></Button>
+            <BackButton fallback={d.isMine ? "/dashboard/sponsorship" : "/dashboard/sponsorship/approvals"} variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Back</BackButton>
             {d.can.edit && <Button asChild size="sm" className="gap-1.5"><Link href={`/dashboard/sponsorship/${d.id}/edit`}><PencilIcon className="h-3.5 w-3.5" />Edit</Link></Button>}
             {d.can.cancel && <Button variant="outline" size="sm" disabled={busy} onClick={() => { setReason(""); setDialog("cancel"); }}>Cancel request</Button>}
           </div>

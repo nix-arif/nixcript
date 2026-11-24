@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -160,7 +161,7 @@ export function GoodsReceiptDetailClient({ gr, permissions, organizationName, ba
             <Button
               variant="outline"
               size="sm"
-              onClick={() => router.push(listHref)}
+              onClick={() => navigateBack(router, listHref)}
               className="gap-1.5"
             >
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back

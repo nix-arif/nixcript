@@ -1,5 +1,6 @@
 "use client";
 
+import { BackButton } from "@/components/back-button";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -114,7 +115,7 @@ export function IssueDetailClient({ issue }: { issue: CustomerIssueDetail }) {
         description={issue.summary}
         action={
           <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href="/dashboard/sales/customer-issues"><ArrowLeftIcon className="h-3.5 w-3.5" />Issues</Link></Button>
+            <BackButton fallback="/dashboard/sales/customer-issues" variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Issues</BackButton>
             {issue.canUpdate && live && <Button asChild variant="outline" size="sm" className="gap-1.5"><Link href={`/dashboard/sales/customer-issues/${issue.id}/edit`}><PencilIcon className="h-3.5 w-3.5" />Edit</Link></Button>}
           </div>
         }

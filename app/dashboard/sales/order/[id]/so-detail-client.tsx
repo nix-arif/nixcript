@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
@@ -392,7 +393,7 @@ export function SalesOrderDetailClient({
         description={organizationName ? `${fmtDate(order.createdAt)} · ${organizationName}` : fmtDate(order.createdAt)}
         action={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push(backHref)} className="gap-1.5">
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={handleExportExcel}>

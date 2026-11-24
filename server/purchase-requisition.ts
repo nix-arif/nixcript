@@ -14,6 +14,7 @@ import {
   member,
   stockLevel,
   organizationProfile,
+  purchaseOrder,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { nanoid } from "nanoid";
@@ -23,7 +24,6 @@ import { buildDocumentNo } from "@/lib/document-numbering";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { notifyUsersWithPermission } from "@/server/notifications";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -414,17 +414,87 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
   return row;
 }
 
-export async function deletePurchaseRequisition(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-requisition:delete");
-  const [existing] = await db
+type ActionResult = { ok: true } | { ok: false; error: string };
+
+// POs raised from this PR — every one (includeCancelled) or only live ones.
+async function posFromPr(orgId: string, prId: string, includeCancelled: boolean): Promise<string[]> {
+  const rows = await db
+    .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, status: purchaseOrder.status })
+    .from(purchaseOrder)
+    .where(and(
+      eq(purchaseOrder.organizationId, orgId),
+      eq(purchaseOrder.purchaseRequisitionId, prId),
+      ...(includeCancelled ? [] : [ne(purchaseOrder.status, "cancelled")]),
+    ));
+  return rows.map((r) => `PO ${r.poNo ?? r.prNo ?? "(unnumbered)"}${r.status === "cancelled" ? " (cancelled)" : ""}`);
+}
+
+// Why each action can't be taken on this PR, or null when it can. Status
+// rules first, then what was raised from it. Shared by the actions below and
+// the fulfilment trail, so the two never disagree.
+export async function purchaseRequisitionBlockers(prId: string): Promise<{ recall: string | null; cancel: string | null; delete: string | null } | null> {
+  const { orgId } = await requireAccess("purchase-requisition:read");
+  const [pr] = await db
+    .select({ prNo: purchaseRequisition.prNo, status: purchaseRequisition.status })
+    .from(purchaseRequisition)
+    .where(and(eq(purchaseRequisition.id, prId), eq(purchaseRequisition.organizationId, orgId)));
+  if (!pr) return null;
+  return prBlockers(orgId, prId, pr);
+}
+
+async function prBlockers(orgId: string, prId: string, pr: { prNo: string; status: string }) {
+  const live = await posFromPr(orgId, prId, false);
+  const any = live.length > 0 ? live : await posFromPr(orgId, prId, true);
+  const liveMsg = (verb: string) => `Can't ${verb} ${pr.prNo} — POs raised from it are still active: ${live.join(", ")}. Cancel those first.`;
+  return {
+    recall: pr.status !== "approved" ? `Only an approved requisition can be recalled (this one is ${pr.status})`
+      : live.length > 0 ? liveMsg("recall") : null,
+    cancel: ["ordered", "cancelled"].includes(pr.status) && live.length > 0 ? liveMsg("cancel")
+      : pr.status === "cancelled" ? `${pr.prNo} is already cancelled`
+      : live.length > 0 ? liveMsg("cancel") : null,
+    delete: pr.status !== "draft" ? `Only a draft requisition can be deleted (this one is ${pr.status}) — cancel it instead`
+      : any.length > 0 ? `Can't delete ${pr.prNo} — POs were raised from it (${any.join(", ")}). Cancel it instead.` : null,
+  };
+}
+
+async function loadPr(orgId: string, id: string) {
+  const [pr] = await db
     .select()
     .from(purchaseRequisition)
     .where(and(eq(purchaseRequisition.id, id), eq(purchaseRequisition.organizationId, orgId)));
-  if (!existing) throw new Error("Purchase requisition not found");
-  if (existing.status !== "draft") throw new Error("Only draft requisitions can be deleted");
+  return pr ?? null;
+}
+
+// Problems come back as a readable message, not a thrown error (those are
+// hidden in production). Callers navigate away themselves after a delete.
+export async function deletePurchaseRequisition(id: string): Promise<ActionResult> {
+  const { orgId } = await requireAccess("purchase-requisition:delete");
+  const pr = await loadPr(orgId, id);
+  if (!pr) return { ok: false, error: "Purchase requisition not found" };
+  const blocked = (await prBlockers(orgId, id, pr)).delete;
+  if (blocked) return { ok: false, error: blocked };
   await db.delete(purchaseRequisition).where(eq(purchaseRequisition.id, id));
   revalidatePath("/dashboard/procurement/requisition");
-  redirect("/dashboard/procurement/requisition");
+  return { ok: true };
+}
+
+// Approved → back to draft for changes, while no live PO has been raised
+// from it. Same approver permission and self-action rule as approving.
+export async function recallPurchaseRequisition(id: string): Promise<ActionResult> {
+  const { orgId, userId } = await requireAccess("purchase-requisition:approve");
+  const pr = await loadPr(orgId, id);
+  if (!pr) return { ok: false, error: "Purchase requisition not found" };
+  const blocked = (await prBlockers(orgId, id, pr)).recall;
+  if (blocked) return { ok: false, error: blocked };
+  try {
+    await assertSelfActionAllowed(orgId, "purchase-requisition:approve", pr.requestedBy, userId, "recall");
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "You can't recall this requisition" };
+  }
+  await db.update(purchaseRequisition).set({ status: "draft", approvedBy: null, approvedAt: null }).where(eq(purchaseRequisition.id, id));
+  revalidatePath(`/dashboard/procurement/requisition/${id}`);
+  revalidatePath("/dashboard/procurement/requisition");
+  return { ok: true };
 }
 
 export async function submitPurchaseRequisition(id: string): Promise<void> {
@@ -474,17 +544,18 @@ export async function rejectPurchaseRequisition(id: string): Promise<void> {
   revalidatePath("/dashboard/procurement/requisition");
 }
 
-export async function cancelPurchaseRequisition(id: string): Promise<void> {
+// Blocked while any live PO was raised from it — including a partly ordered
+// one, which used to be cancellable underneath a live PO.
+export async function cancelPurchaseRequisition(id: string): Promise<ActionResult> {
   const { orgId } = await requireAccess("purchase-requisition:update");
-  const [existing] = await db
-    .select()
-    .from(purchaseRequisition)
-    .where(and(eq(purchaseRequisition.id, id), eq(purchaseRequisition.organizationId, orgId)));
-  if (!existing) throw new Error("Purchase requisition not found");
-  if (["ordered", "cancelled"].includes(existing.status)) throw new Error("Cannot cancel this requisition");
+  const pr = await loadPr(orgId, id);
+  if (!pr) return { ok: false, error: "Purchase requisition not found" };
+  const blocked = (await prBlockers(orgId, id, pr)).cancel;
+  if (blocked) return { ok: false, error: blocked };
   await db.update(purchaseRequisition).set({ status: "cancelled" }).where(eq(purchaseRequisition.id, id));
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");
+  return { ok: true };
 }
 
 // ── Helpers for create form ────────────────────────────────────────────────

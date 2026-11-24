@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeftIcon, CheckIcon, AlertCircleIcon,
@@ -72,7 +73,7 @@ export function CustomerPoDetailClient({
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Button variant="ghost" size="icon" className="w-7 h-7 -ml-1.5" onClick={() => router.push(backHref)}>
+            <Button variant="ghost" size="icon" className="w-7 h-7 -ml-1.5" onClick={() => navigateBack(router, backHref)}>
               <ArrowLeftIcon className="w-3.5 h-3.5" />
             </Button>
             <h1 className="text-lg font-bold font-mono">{cpo.customerPoNo}</h1>

@@ -1,5 +1,6 @@
 "use client";
 
+import { navigateBack } from "@/hooks/use-back";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -1010,7 +1011,7 @@ export function PeriodDetailClient({
     <div className="p-6">
       {/* Breadcrumb */}
       <button
-        onClick={() => router.push("/dashboard/human-resources/payroll")}
+        onClick={() => navigateBack(router, "/dashboard/human-resources/payroll")}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-4 transition-colors"
       >
         <ArrowLeftIcon className="w-3.5 h-3.5" /> Payroll
