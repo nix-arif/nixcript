@@ -1394,6 +1394,15 @@ async function activeSalesOrderDownstream(orgId: string, soId: string): Promise<
   ];
 }
 
+// Read-only: what would stop this SO being recalled. The detail page hides
+// the Recall button when this isn't empty; recallSalesOrder re-checks anyway.
+export async function getSalesOrderRecallBlockers(soId: string): Promise<string[]> {
+  const { orgId } = await requireAccess("sales-order:read");
+  const [so] = await db.select({ id: salesOrder.id }).from(salesOrder).where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  if (!so) return [];
+  return activeSalesOrderDownstream(orgId, soId);
+}
+
 // Problems come back as a readable message, not a thrown error (those are
 // hidden in production).
 export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {

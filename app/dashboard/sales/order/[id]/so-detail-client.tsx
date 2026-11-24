@@ -74,6 +74,7 @@ export function SalesOrderDetailClient({
   editHref,
   organizationName,
   businessType = "trading",
+  recallBlockers = [],
 }: {
   order: SalesOrderWithItems;
   linkedQuotations?: QuotationBasic[];
@@ -90,6 +91,8 @@ export function SalesOrderDetailClient({
   editHref?: string;
   organizationName?: string;
   businessType?: string;
+  // Active documents raised from this SO — Recall is hidden while any exist.
+  recallBlockers?: string[];
 }) {
   // Product database descriptions, to point out items whose description was changed on the order
   const dbLookup = useDbDescriptionLookup(order.items.map((i) => refOf(i as unknown as DbDescItem, businessType !== "trading")));
@@ -1025,7 +1028,7 @@ export function SalesOrderDetailClient({
                 </Button>
               )}
               {/* Manager: recall confirmed → back to draft */}
-              {status === "confirmed" && can("sales-order:approve") && (
+              {status === "confirmed" && can("sales-order:approve") && recallBlockers.length === 0 && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1036,6 +1039,11 @@ export function SalesOrderDetailClient({
                   <RotateCcwIcon className="w-3.5 h-3.5" />
                   {actioning === "recall" ? "Recalling…" : "Recall"}
                 </Button>
+              )}
+              {status === "confirmed" && can("sales-order:approve") && recallBlockers.length > 0 && (
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  Can&apos;t recall — active documents raised from this order: {recallBlockers.join(", ")}.
+                </p>
               )}
             </div>
           </section>

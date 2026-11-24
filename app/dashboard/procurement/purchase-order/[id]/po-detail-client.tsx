@@ -262,7 +262,10 @@ export function PurchaseOrderDetailClient({
   editHref,
   hidePricing = false,
   canEditPoNumber,
+  recallBlockers = [],
 }: {
+  // Active documents raised from this PO — Recall is hidden while any exist.
+  recallBlockers?: string[];
   order: PurchaseOrderWithItems;
   permissions: string[];
   currentUserId: string;
@@ -882,7 +885,7 @@ export function PurchaseOrderDetailClient({
                     {actioning === "fulfill" ? "Closing…" : "Close PO (no GR)"}
                   </Button>
                 )}
-                {can("purchase-order:approve") && (
+                {can("purchase-order:approve") && recallBlockers.length === 0 && (
                   <Button
                     size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
                     onClick={() => act("recall", async () => {
@@ -893,6 +896,11 @@ export function PurchaseOrderDetailClient({
                     <RotateCcwIcon className="w-3.5 h-3.5" />
                     {actioning === "recall" ? "Recalling…" : "Recall PO"}
                   </Button>
+                )}
+                {can("purchase-order:approve") && recallBlockers.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Can&apos;t recall — active documents raised from this PO: {recallBlockers.join(", ")}.
+                  </p>
                 )}
                 {can("purchase-order:approve") && (
                   <Button

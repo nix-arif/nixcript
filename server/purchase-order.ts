@@ -2001,6 +2001,15 @@ async function activePurchaseOrderDownstream(orgId: string, poId: string): Promi
   ];
 }
 
+// Read-only: what would stop this PO being recalled. The detail page hides
+// the Recall button when this isn't empty; recallPurchaseOrder re-checks anyway.
+export async function getPurchaseOrderRecallBlockers(poId: string): Promise<string[]> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  const [po] = await db.select({ id: purchaseOrder.id }).from(purchaseOrder).where(and(eq(purchaseOrder.id, poId), eq(purchaseOrder.organizationId, orgId)));
+  if (!po) return [];
+  return activePurchaseOrderDownstream(orgId, poId);
+}
+
 // Problems come back as a readable message, not a thrown error (those are
 // hidden in production).
 export async function recallPurchaseOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {

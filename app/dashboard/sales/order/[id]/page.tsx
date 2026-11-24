@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getSalesOrderDetail } from "@/server/sales-order";
+import { getSalesOrderDetail, getSalesOrderRecallBlockers } from "@/server/sales-order";
 import { getQuotationBasic, type QuotationBasic } from "@/server/quotation";
 import { getDeliveryOrdersBySoId, getSoItemDeliveredQtys } from "@/server/delivery-order";
 import { getPrsBySoId } from "@/server/purchase-requisition";
@@ -28,14 +28,15 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
     return [...ids];
   })();
 
-  const [linkedQuotations, linkedDos, linkedPrs, itemDeliveredQtys] = await Promise.all([
+  const [linkedQuotations, linkedDos, linkedPrs, itemDeliveredQtys, recallBlockers] = await Promise.all([
     Promise.all(allQuotationIds.map((qId) => getQuotationBasic(qId).catch(() => null))).then(
       (results) => results.filter((q): q is QuotationBasic => q !== null)
     ),
     getDeliveryOrdersBySoId(id).catch(() => []),
     getPrsBySoId(id).catch(() => []),
     getSoItemDeliveredQtys(id).catch(() => ({} as Record<string, number>)),
+    order.status === "confirmed" ? getSalesOrderRecallBlockers(id).catch(() => []) : Promise.resolve([]),
   ]);
 
-  return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} businessType={profile?.businessType ?? "trading"} />;
+  return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} businessType={profile?.businessType ?? "trading"} recallBlockers={recallBlockers} />;
 }

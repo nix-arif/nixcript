@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getPurchaseOrderDetail } from "@/server/purchase-order";
+import { getPurchaseOrderDetail, getPurchaseOrderRecallBlockers } from "@/server/purchase-order";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { getOrganizationProfile } from "@/server/organization-profile";
 import { notFound } from "next/navigation";
@@ -17,12 +17,15 @@ export default async function PurchaseOrderDetailPage({ params }: { params: Prom
 
   if (!order) notFound();
 
+  const recallBlockers = order.status === "confirmed" ? await getPurchaseOrderRecallBlockers(id).catch(() => []) : [];
+
   return (
     <PurchaseOrderDetailClient
       order={order}
       permissions={permissions}
       currentUserId={session.user.id}
       businessType={profile?.businessType ?? "trading"}
+      recallBlockers={recallBlockers}
     />
   );
 }
