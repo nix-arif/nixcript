@@ -12,10 +12,11 @@
 
 import { db } from "@/db";
 import {
-  goodsReceipt, goodsReceiptItem, organization, packingList, packingListItem,
+  goodsReceipt, goodsReceiptItem, inspectionPhoto, organization, packingList, packingListAmendment, packingListItem,
   purchaseOrder, purchaseOrderItem, returnReplacementAttempt,
 } from "@/db/schema";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { downloadUrl, extOf, IMAGE_EXTS } from "@/lib/r2/post-delivery";
 import { requireAccess } from "@/lib/auth/require-access";
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 
@@ -25,9 +26,14 @@ export type PendingShortPl = {
   packingListId: string; packingListNo: string; plStatus: string; createdAt: Date;
   expected: number; received: number; pending: number;
 };
+// A defect photo / video taken when the line was rejected at inspection.
+// url: a signed link for the page; the PDF fetches images through
+// /api/pending-from-supplier/photo/[id] instead (same site).
+export type PendingPhoto = { id: string; kind: "image" | "video"; url: string };
 export type PendingReturn = {
   goodsReceiptId: string; grNo: string; packingListNo: string | null;
   rejected: number; outstanding: number; inspectedAt: Date | null; shippedAt: Date | null;
+  photos: PendingPhoto[];
 };
 export type PendingLine = {
   organizationId: string; organizationName: string | null;
@@ -81,8 +87,9 @@ async function computePending(orgIds: string[]): Promise<PendingLine[]> {
       .where(and(inArray(packingListItem.purchaseOrderItemId, poItemIds), ne(packingList.status, "cancelled"), isNull(packingListItem.removedAt))),
     db.select({
         id: goodsReceiptItem.id, poItemId: goodsReceiptItem.purchaseOrderItemId, plItemId: goodsReceiptItem.packingListItemId,
-        qtyReceived: goodsReceiptItem.qtyReceived, qtyReturn: goodsReceiptItem.qtyReturn, returnStatus: goodsReceiptItem.returnStatus,
+        qtyReceived: goodsReceiptItem.qtyReceived, qtyGood: goodsReceiptItem.qtyGood, qtyReturn: goodsReceiptItem.qtyReturn, returnStatus: goodsReceiptItem.returnStatus,
         inspectedAt: goodsReceiptItem.inspectedAt, shippedAt: goodsReceiptItem.returnShippedAt,
+        grPlItemId: goodsReceiptItem.packingListItemId,
         grId: goodsReceipt.id, grNo: goodsReceipt.grNo, grStatus: goodsReceipt.status, grPlId: goodsReceipt.packingListId,
       })
       .from(goodsReceiptItem)
@@ -94,7 +101,32 @@ async function computePending(orgIds: string[]): Promise<PendingLine[]> {
       .where(inArray(packingListItem.purchaseOrderItemId, poItemIds)),
   ]);
   const orgName = new Map(orgRows.map((o) => [o.id, o.name]));
-  const replacementPlItemIds = new Set(attemptRows.map((a) => a.plItemId));
+
+  // Defect evidence for rejected lines: the "return" photos of the packing-list
+  // line they were rejected on (a change request's photos count once approved)
+  const rejectedPlItemIds = [...new Set(grRows.filter((g) => g.returnStatus === "pending" && num(g.qtyReturn) > 0 && g.grPlItemId).map((g) => g.grPlItemId!))];
+  const photoRows = rejectedPlItemIds.length === 0 ? [] : (await db
+    .select({ id: inspectionPhoto.id, plItemId: inspectionPhoto.packingListItemId, key: inspectionPhoto.imageKey })
+    .from(inspectionPhoto)
+    .leftJoin(packingListAmendment, eq(inspectionPhoto.amendmentId, packingListAmendment.id))
+    .where(and(
+      inArray(inspectionPhoto.packingListItemId, rejectedPlItemIds),
+      eq(inspectionPhoto.category, "return"),
+      or(isNull(inspectionPhoto.amendmentId), eq(packingListAmendment.status, "approved")),
+    ))
+    .orderBy(asc(inspectionPhoto.createdAt)));
+  const photosByPlItem = new Map<string, PendingPhoto[]>();
+  await Promise.all(photoRows.map(async (p) => {
+    const kind = IMAGE_EXTS.includes(extOf(p.key)) ? "image" as const : "video" as const;
+    const url = await downloadUrl(p.key, { video: kind === "video" && extOf(p.key) === "mov" });
+    photosByPlItem.set(p.plItemId, [...(photosByPlItem.get(p.plItemId) ?? []), { id: p.id, kind, url }]);
+  }));
+  // Real replacement shipments only. Some returns record the original shipment
+  // itself as attempt #1 (the attempt points at the very packing-list line the
+  // units were rejected on) — that line is a normal shipment, not a replacement.
+  const rejectedOnPlItem = new Map(grRows.map((g) => [g.id, g.plItemId]));
+  const realAttempts = attemptRows.filter((a) => a.plItemId !== rejectedOnPlItem.get(a.grItemId));
+  const replacementPlItemIds = new Set(realAttempts.map((a) => a.plItemId));
   const plNoById = new Map(plRows.map((p) => [p.plId, p.plNo]));
 
   const lines: PendingLine[] = [];
@@ -105,22 +137,46 @@ async function computePending(orgIds: string[]): Promise<PendingLine[]> {
     const myGrs = grRows.filter((g) => g.poItemId === item.id);
 
     // short on each packing list (only received on confirmed GRs counts)
-    const shortPls: PendingShortPl[] = closed ? [] : myPls.map((p) => {
+    let shortPls: PendingShortPl[] = closed ? [] : myPls.map((p) => {
       const received = myGrs.filter((g) => g.plItemId === p.plItemId && g.grStatus === "confirmed").reduce((s, g) => s + num(g.qtyReceived), 0);
       const expected = num(p.qtyExpected);
       return { packingListId: p.plId, packingListNo: p.plNo, plStatus: p.plStatus, createdAt: p.plCreatedAt, expected, received, pending: Math.max(0, expected - received) };
     }).filter((p) => p.pending > 0);
     const onPls = myPls.reduce((s, p) => s + num(p.qtyExpected), 0);
-    const qtyNotShipped = closed || po.status !== "confirmed" ? 0 : Math.max(0, ordered - onPls);
+    let qtyNotShipped = closed || po.status !== "confirmed" ? 0 : Math.max(0, ordered - onPls);
 
     // rejected, returned and not yet replaced by good units
-    const returns: PendingReturn[] = myGrs
-      .filter((g) => g.returnStatus === "pending" && num(g.qtyReturn) > 0)
+    // A rejection on a replacement shipment isn't counted again: the original
+    // return it was replacing still owes those units (rejected − good replacements).
+    let returns: PendingReturn[] = myGrs
+      .filter((g) => g.returnStatus === "pending" && num(g.qtyReturn) > 0 && !(g.plItemId && replacementPlItemIds.has(g.plItemId)))
       .map((g) => {
-        const good = attemptRows.filter((a) => a.grItemId === g.id && a.status === "inspected").reduce((s, a) => s + num(a.qtyGood), 0);
-        return { goodsReceiptId: g.grId, grNo: g.grNo, packingListNo: g.grPlId ? (plNoById.get(g.grPlId) ?? null) : null, rejected: num(g.qtyReturn), outstanding: Math.max(0, num(g.qtyReturn) - good), inspectedAt: g.inspectedAt, shippedAt: g.shippedAt };
+        const good = realAttempts.filter((a) => a.grItemId === g.id && a.status === "inspected").reduce((s, a) => s + num(a.qtyGood), 0);
+        return {
+          goodsReceiptId: g.grId, grNo: g.grNo, packingListNo: g.grPlId ? (plNoById.get(g.grPlId) ?? null) : null,
+          rejected: num(g.qtyReturn), outstanding: Math.max(0, num(g.qtyReturn) - good), inspectedAt: g.inspectedAt, shippedAt: g.shippedAt,
+          photos: g.grPlItemId ? (photosByPlItem.get(g.grPlItemId) ?? []) : [],
+        };
       })
       .filter((r) => r.outstanding > 0);
+
+    // Never more than the supplier can still owe: ordered − good units accepted.
+    // When the parts add up to more (a later packing list re-sent what an
+    // earlier one was short of; extra units arrived and were rejected), take
+    // the excess off "short" first (oldest packing list first), then "not
+    // shipped", then "awaiting replacement".
+    const accepted = myGrs.filter((g) => g.grStatus === "confirmed").reduce((s, g) => s + num(g.qtyGood ?? g.qtyReceived), 0);
+    const owed = Math.max(0, ordered - accepted);
+    let excess = qtyNotShipped + shortPls.reduce((s, p) => s + p.pending, 0) + returns.reduce((s, r) => s + r.outstanding, 0) - owed;
+    if (excess > 0) {
+      shortPls = [...shortPls].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()).map((p) => {
+        const cut = Math.min(p.pending, excess); excess -= cut; return { ...p, pending: p.pending - cut };
+      }).filter((p) => p.pending > 0);
+      const cutNs = Math.min(qtyNotShipped, excess); qtyNotShipped -= cutNs; excess -= cutNs;
+      returns = [...returns].reverse().map((r) => {
+        const cut = Math.min(r.outstanding, excess); excess -= cut; return { ...r, outstanding: r.outstanding - cut };
+      }).reverse().filter((r) => r.outstanding > 0);
+    }
 
     const qtyShort = shortPls.reduce((s, p) => s + p.pending, 0);
     const qtyAwaitingReplacement = returns.reduce((s, r) => s + r.outstanding, 0);

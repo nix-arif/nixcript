@@ -25,6 +25,28 @@ const KIND_LABEL: Record<Cond, string> = {
 };
 
 const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+// A defect photo for the PDF: fetched from this site, shrunk to ≤400px and
+// re-encoded as JPEG (pdf-lib embeds only JPEG/PNG; phones may send WebP/HEIC-
+// converted files). null when it can't be loaded — the PDF just leaves it out.
+async function photoForPdf(id: string): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(`/api/pending-from-supplier/photo/${id}`);
+    if (!res.ok) return null;
+    const bmp = await createImageBitmap(await res.blob());
+    const sc = Math.min(1, 400 / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bmp.width * sc));
+    canvas.height = Math.max(1, Math.round(bmp.height * sc));
+    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.82));
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  } catch {
+    return null;
+  }
+}
+
+// the line's unit of measure for "Short by 2 pc" — "pc" when it has none
+const unitOf = (l: PendingLine) => (l.uom?.trim() || "pc").toLowerCase();
 const daysSince = (d: Date) => Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000));
 const fmtDate = (d: Date) => new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
 
@@ -141,6 +163,16 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
     setDownloading(true);
     try {
       const { generatePendingFromSupplierPdf } = await import("./generate-pdf");
+      // defect photos for the Awaiting replacement column (first 4 images per rejection), 4 at a time
+      const photos = new Map<string, Uint8Array>();
+      if (show.replacement) {
+        const ids = [...new Set(filtered.flatMap((l) => l.returns.flatMap((r) => r.photos.filter((ph) => ph.kind === "image").slice(0, 4).map((ph) => ph.id))))];
+        for (let i = 0; i < ids.length; i += 4) {
+          const batch = ids.slice(i, i + 4);
+          const got = await Promise.all(batch.map(photoForPdf));
+          batch.forEach((id, j) => { if (got[j]) photos.set(id, got[j]!); });
+        }
+      }
       const ticked = ALL_CONDS.filter((c) => conds.has(c));
       const filters = [
         `Conditions: ${allConds ? "all" : ticked.map((c) => KIND_LABEL[c]).join(", ")}`,
@@ -157,6 +189,7 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
         groups,
         showOrg: centralized,
         show,
+        photos,
       });
       const slug = (supplierFilter ?? "all-suppliers").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
@@ -386,15 +419,17 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                               {l.shortPls.length === 0 ? "—" : (
                                 <div className="space-y-1">
                                   {l.shortPls.map((p) => (
-                                    <div key={p.packingListId} className="flex items-center gap-1.5 whitespace-nowrap">
-                                      <span className="tabular-nums font-medium">{fmtQty(p.pending)}</span>
-                                      <span className="text-muted-foreground">on</span>
-                                      <Link href={plHref(p.packingListId)} className="font-mono text-primary hover:underline">
-                                        <Highlight text={p.packingListNo} query={search} />
-                                      </Link>
-                                      <span className="text-[10px] text-muted-foreground">
-                                        {p.received === 0 && p.plStatus === "pending" ? "awaiting receipt" : `${fmtQty(p.received)}/${fmtQty(p.expected)} received`}
-                                      </span>
+                                    <div key={p.packingListId}>
+                                      <div className="font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap">
+                                        Short by {fmtQty(p.pending)} {unitOf(l)}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground">
+                                        <span>on</span>
+                                        <Link href={plHref(p.packingListId)} className="font-mono text-primary hover:underline">
+                                          <Highlight text={p.packingListNo} query={search} />
+                                        </Link>
+                                        <span>· {p.received === 0 && p.plStatus === "pending" ? "awaiting receipt" : `${fmtQty(p.received)}/${fmtQty(p.expected)} received`}</span>
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
@@ -402,15 +437,37 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                             </td>
                             <td className={cn("px-3 py-2", dim("replacement"))}>
                               {l.returns.length === 0 ? "—" : (
-                                <div className="space-y-1">
+                                <div className="space-y-2">
                                   {l.returns.map((r) => (
-                                    <div key={r.goodsReceiptId + r.grNo} className="flex items-center gap-1.5 whitespace-nowrap">
-                                      <span className="tabular-nums font-medium">{fmtQty(r.outstanding)}</span>
-                                      <span className="text-muted-foreground">from</span>
-                                      <Link href={grHref(r.goodsReceiptId)} className="font-mono text-primary hover:underline">
-                                        <Highlight text={r.grNo} query={search} />
-                                      </Link>
-                                      <span className="text-[10px] text-muted-foreground">{r.shippedAt ? `sent back ${fmtDate(r.shippedAt)}` : "not sent back yet"}</span>
+                                    <div key={r.goodsReceiptId + r.grNo}>
+                                      <div className="font-medium text-red-700 dark:text-red-400 whitespace-nowrap">
+                                        Awaiting replacement: {fmtQty(r.outstanding)} {unitOf(l)}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 whitespace-nowrap text-[10px] text-muted-foreground">
+                                        <span>rejected on</span>
+                                        <Link href={grHref(r.goodsReceiptId)} className="font-mono text-primary hover:underline">
+                                          <Highlight text={r.grNo} query={search} />
+                                        </Link>
+                                        {r.packingListNo && <span>({r.packingListNo})</span>}
+                                        <span>· {r.shippedAt ? `sent back ${fmtDate(r.shippedAt)}` : "not sent back yet"}</span>
+                                      </div>
+                                      {r.photos.length > 0 && (
+                                        <div className="mt-1 flex flex-wrap gap-1">
+                                          {r.photos.slice(0, 6).map((ph) => (
+                                            <a key={ph.id} href={ph.url} target="_blank" rel="noopener noreferrer" title="Defect photo — open full size" className="block">
+                                              {ph.kind === "image" ? (
+                                                // eslint-disable-next-line @next/next/no-img-element -- signed storage link, not an optimisable asset
+                                                <img src={ph.url} alt="Defect photo" loading="lazy" className="h-12 w-12 rounded border border-border object-cover" />
+                                              ) : (
+                                                <span className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted text-[10px] text-muted-foreground">▶ video</span>
+                                              )}
+                                            </a>
+                                          ))}
+                                          {r.photos.length > 6 && (
+                                            <span className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted text-[11px] text-muted-foreground">+{r.photos.length - 6}</span>
+                                          )}
+                                        </div>
+                                      )}
                                     </div>
                                   ))}
                                 </div>
@@ -442,7 +499,7 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
             {([
               ["customer", "Customer name & customer organization name", "Under each item, with its customer PO no."],
               ["short", "Short on packing list", "Which packing lists are short, and by how much"],
-              ["replacement", "Awaiting replacement", "Which goods receipts' rejected units are still not replaced"],
+              ["replacement", "Awaiting replacement", "Which goods receipts' rejected units are still not replaced, with their defect photos"],
             ] as [keyof PdfShow, string, string][]).map(([key, label, hint]) => (
               <label key={key} className="flex items-start gap-3 cursor-pointer">
                 <Checkbox

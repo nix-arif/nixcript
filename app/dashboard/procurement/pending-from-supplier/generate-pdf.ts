@@ -2,7 +2,7 @@
 // page is showing: the same lines after the condition / supplier / company /
 // search filters. Only the ticked conditions get a column. A4 landscape.
 
-import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
 import type { PendingLine } from "@/server/pending-from-supplier";
 
 export type PdfCond = "notShipped" | "short" | "replacement";
@@ -17,6 +17,8 @@ export type PendingPdfInput = {
   showOrg: boolean;                 // centralized: name the company on each supplier
   // What the user chose to print (the PDF options dialog)
   show: { customer: boolean; short: boolean; replacement: boolean };
+  // Defect photos, already shrunk to JPEG in the browser, by photo id
+  photos?: Map<string, Uint8Array>;
 };
 
 const W = 842, H = 595, M = 32, CW = W - 2 * M;
@@ -26,6 +28,8 @@ const AMBER = rgb(0.72, 0.45, 0.02), RED = rgb(0.75, 0.12, 0.12);
 // the standard PDF fonts can't print every character: replace what they can't
 const safe = (t: unknown) => String(t ?? "").replace(/[\r\t\n]+/g, " ").replace(/[^\x20-\x7E -ÿ]/g, "?");
 const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+// the line's unit of measure for "Short by 2 pc" — "pc" when it has none
+const unitOf = (l: PendingLine) => (l.uom?.trim() || "pc").toLowerCase();
 const fmtDate = (d: Date) => new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
 const daysSince = (d: Date) => Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000));
 
@@ -48,7 +52,11 @@ function wrap(text: string, font: PDFFont, size: number, maxW: number): string[]
   return out.length ? out : [""];
 }
 
-type Col = { key: string; label: string; width: number; align?: "right"; cell: (l: PendingLine) => string[] };
+// A cell is plain text lines — or, for the short / replacement columns, pieces:
+// styled text (wrapped to the column) and rows of defect-photo thumbnails.
+type Piece = { text: string; font: "regular" | "bold"; color: "ink" | "mid" | "amber" | "red" } | { photos: string[] };
+type Col = { key: string; label: string; width: number; align?: "right"; cell: (l: PendingLine) => string[]; pieces?: (l: PendingLine) => Piece[] };
+const THUMB = 40, PHOTOS_PER_RETURN = 4;
 
 export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
@@ -71,8 +79,24 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
   ];
   const condCols: Record<PdfCond, Col> = {
     notShipped: { key: "notShipped", label: input.condLabel.notShipped, width: 62, align: "right", cell: (l) => [l.qtyNotShipped > 0 ? fmtQty(l.qtyNotShipped) : "-"] },
-    short: { key: "short", label: input.condLabel.short, width: 170, cell: (l) => (l.shortPls.length ? l.shortPls.map((p) => `${fmtQty(p.pending)} on ${p.packingListNo} (${p.received === 0 && p.plStatus === "pending" ? "awaiting receipt" : `${fmtQty(p.received)}/${fmtQty(p.expected)} received`})`) : ["-"]) },
-    replacement: { key: "replacement", label: input.condLabel.replacement, width: 170, cell: (l) => (l.returns.length ? l.returns.map((r) => `${fmtQty(r.outstanding)} from ${r.grNo} (${r.shippedAt ? `sent back ${fmtDate(r.shippedAt)}` : "not sent back yet"})`) : ["-"]) },
+    short: {
+      key: "short", label: input.condLabel.short, width: 170, cell: () => ["-"],
+      pieces: (l) => (l.shortPls.length ? l.shortPls.flatMap((p): Piece[] => [
+        { text: `Short by ${fmtQty(p.pending)} ${unitOf(l)}`, font: "bold", color: "amber" },
+        { text: `on ${p.packingListNo} · ${p.received === 0 && p.plStatus === "pending" ? "awaiting receipt" : `${fmtQty(p.received)}/${fmtQty(p.expected)} received`}`, font: "regular", color: "mid" },
+      ]) : [{ text: "-", font: "regular", color: "ink" }]),
+    },
+    replacement: {
+      key: "replacement", label: input.condLabel.replacement, width: 170, cell: () => ["-"],
+      pieces: (l) => (l.returns.length ? l.returns.flatMap((r): Piece[] => {
+        const photos = r.photos.filter((ph) => ph.kind === "image" && input.photos?.has(ph.id)).slice(0, PHOTOS_PER_RETURN).map((ph) => ph.id);
+        return [
+          { text: `Awaiting replacement: ${fmtQty(r.outstanding)} ${unitOf(l)}`, font: "bold", color: "red" },
+          { text: `rejected on ${r.grNo}${r.packingListNo ? ` (${r.packingListNo})` : ""} · ${r.shippedAt ? `sent back ${fmtDate(r.shippedAt)}` : "not sent back yet"}`, font: "regular", color: "mid" },
+          ...(photos.length ? [{ photos }] : []),
+        ];
+      }) : [{ text: "-", font: "regular", color: "ink" }]),
+    },
   };
   // Which lines are in, and what Pending / the totals count, follow the page's
   // condition cards (input.conds) — exactly as on screen. The dialog's choices
@@ -94,6 +118,12 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
   const used = cols.reduce((s, c) => s + c.width, 0);
   cols[1].width = Math.max(140, CW - used);   // item column takes what's left
   const PAD = 4, SIZE = 7.5, LH = 9.5;
+
+  // defect photos, embedded once each
+  const embedded = new Map<string, PDFImage>();
+  for (const [id, bytes] of input.photos ?? []) {
+    try { embedded.set(id, await pdf.embedJpg(bytes)); } catch { /* a photo that won't embed is left out */ }
+  }
 
   let page: PDFPage = pdf.addPage([W, H]);
   let y = H - M;
@@ -172,11 +202,46 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
     drawTableHeader();
 
     for (const l of g.lines) {
-      const cells = cols.map((c) => c.cell(l).flatMap((t) => wrap(t, c.key === "po" || c.key === "item" ? font : font, SIZE, c.width - 2 * PAD)));
-      const rowH = Math.max(...cells.map((c) => c.length)) * LH + 2 * PAD - 2;
+      const cells = cols.map((c) => c.cell(l).flatMap((t) => wrap(t, font, SIZE, c.width - 2 * PAD)));
+      // pieces columns: each text piece wrapped; photo rows take one thumbnail row
+      const laid = cols.map((c) => c.pieces?.(l).map((pc) => ("photos" in pc
+        ? { photos: pc.photos, h: THUMB + 3 }
+        : { lines: wrap(pc.text, pc.font === "bold" ? bold : font, SIZE, c.width - 2 * PAD), pc, h: 0 })) ?? null);
+      const heightOf = (ci: number) => {
+        const L = laid[ci];
+        if (!L) return cells[ci].length * LH;
+        return L.reduce((s, it) => s + ("photos" in it ? it.h : it.lines.length * LH), 0);
+      };
+      const rowH = Math.max(...cols.map((_, ci) => heightOf(ci))) + 2 * PAD - 2;
       if (y - rowH < M + 16) newPage(true, heading);
       let x = M;
       cols.forEach((c, ci) => {
+        const L = laid[ci];
+        if (L) {
+          let cy = y - PAD - 6;
+          for (const it of L) {
+            if ("photos" in it) {
+              let px = x + PAD;
+              for (const id of it.photos ?? []) {
+                const img = embedded.get(id);
+                if (img) {
+                  const sc = Math.min(THUMB / img.width, THUMB / img.height);
+                  // top-aligned just under the text above it
+                  page.drawImage(img, { x: px, y: cy + 4 - img.height * sc, width: img.width * sc, height: img.height * sc });
+                  page.drawRectangle({ x: px, y: cy + 4 - img.height * sc, width: img.width * sc, height: img.height * sc, borderColor: LINE, borderWidth: 0.5 });
+                  px += img.width * sc + 3;
+                }
+              }
+              cy -= it.h;
+            } else {
+              const f = it.pc.font === "bold" ? bold : font;
+              const color: RGB = { ink: INK, mid: MID, amber: AMBER, red: RED }[it.pc.color];
+              for (const ln of it.lines) { text(page, ln, x + PAD, cy, f, SIZE, color); cy -= LH; }
+            }
+          }
+          x += c.width;
+          return;
+        }
         cells[ci].forEach((ln, li) => {
           const f = c.key === "pending" || (c.key === "po" && li === 0) ? bold : font;
           const color = c.key === "age" ? (daysSince(l.since) > 60 ? RED : daysSince(l.since) > 30 ? AMBER : MID)
