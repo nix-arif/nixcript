@@ -350,7 +350,12 @@ export function PurchaseOrderDetailClient({
     if (!confirm(`Permanently delete ${order.poNo ?? order.prNo ?? "this supplier PO"}? This removes the record entirely and can't be undone.`)) return;
     setDeleting(true);
     try {
-      await deletePurchaseOrder(order.id);
+      const res = await deletePurchaseOrder(order.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        setDeleting(false);
+        return;
+      }
       toast.success("Purchase order deleted");
       router.push(backHref);
     } catch (e) {

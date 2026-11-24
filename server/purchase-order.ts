@@ -1816,7 +1816,9 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
   return row;
 }
 
-export async function deletePurchaseOrder(id: string): Promise<void> {
+// Problems come back as a readable message, not a thrown error (those are
+// hidden in production). Every check runs before any file or row is removed.
+export async function deletePurchaseOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { orgId } = await requireOwner();
 
   const [existing] = await db
@@ -1824,9 +1826,32 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
     .from(purchaseOrder)
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
 
-  if (!existing) throw new Error("Purchase order not found");
-  if (existing.approvedAt) throw new Error("Approved purchase orders cannot be deleted");
-  if (!DELETABLE_STATUSES.has(existing.status)) throw new Error("Only draft or cancelled purchase orders can be deleted");
+  if (!existing) return { ok: false, error: "Purchase order not found" };
+  if (existing.approvedAt) return { ok: false, error: "Approved purchase orders cannot be deleted" };
+  if (!DELETABLE_STATUSES.has(existing.status)) return { ok: false, error: "Only draft or cancelled purchase orders can be deleted" };
+
+  // approvedAt alone doesn't protect a PO that went out: it's only set on the
+  // PR-conversion path, so a PO created directly as confirmed and then
+  // recalled or cancelled reaches here with it still null.
+  const docRef = existing.poNo ?? existing.prNo ?? id;
+  const downstream = await activePurchaseOrderDownstream(orgId, id);
+  if (downstream.length > 0) {
+    return {
+      ok: false,
+      error: `Can't delete ${docRef} — documents raised from it are still active: ${downstream.join(", ")}. Cancel or recall those first.`,
+    };
+  }
+
+  // Inactive records still block: goods receipts would be deleted along with
+  // the PO (cascade) — losing the receipt history behind their stock
+  // movements — and packing lists / invoices make the database refuse.
+  const [hasGr] = await db.select({ id: goodsReceipt.id }).from(goodsReceipt).where(eq(goodsReceipt.purchaseOrderId, id)).limit(1);
+  const [hasPl] = await db.select({ id: packingListItem.id }).from(packingListItem).where(eq(packingListItem.purchaseOrderId, id)).limit(1);
+  const [hasInv] = await db.select({ id: invoice.id }).from(invoice).where(eq(invoice.purchaseOrderId, id)).limit(1);
+  if (hasGr || hasPl || hasInv) {
+    const kinds = [hasGr && "goods receipts", hasPl && "packing lists", hasInv && "invoices"].filter(Boolean).join(", ");
+    return { ok: false, error: `Can't delete ${docRef} — it has ${kinds} on record (even if recalled or cancelled). Keep it cancelled instead.` };
+  }
 
   if (existing.supplierQuotationKey) {
     await deleteFile(SUPPLIER_QUOTATION_BUCKET, existing.supplierQuotationKey);
@@ -1843,6 +1868,7 @@ export async function deletePurchaseOrder(id: string): Promise<void> {
   }
 
   await db.delete(purchaseOrder).where(eq(purchaseOrder.id, id));
+  return { ok: true };
 }
 
 // Owner-only — the PO number is otherwise fixed once auto-generated (or
