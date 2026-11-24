@@ -23,6 +23,7 @@ export default async function CentralizedCustomerPoDetailPage({ params }: { para
       backHref={isIntercompany ? "/dashboard/sales/customer-po/centralized/intercompany" : "/dashboard/sales/customer-po/centralized"}
       organizationName={organizationName}
       editHref={canEdit ? `/dashboard/sales/customer-po/centralized/${id}/edit` : undefined}
+      trailHref={`/dashboard/sales/customer-po/centralized/${id}/trail`}
     />
   );
 }
