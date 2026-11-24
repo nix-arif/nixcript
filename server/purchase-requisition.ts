@@ -1,5 +1,6 @@
 "use server";
 
+import { fillPurchaseRequisitionItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
   purchaseRequisition,
@@ -344,6 +345,7 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
         setQty: i.setQty ?? null,
       })),
     );
+    await fillPurchaseRequisitionItemCustomers(row.id);
   }
 
   revalidatePath("/dashboard/procurement/requisition");
@@ -407,6 +409,7 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
         setQty: i.setQty ?? null,
       })),
     );
+    await fillPurchaseRequisitionItemCustomers(input.id);
   }
 
   revalidatePath("/dashboard/procurement/requisition");

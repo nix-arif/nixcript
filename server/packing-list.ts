@@ -1,5 +1,6 @@
 "use server";
 
+import { fillPackingListItemCustomers } from "@/lib/trace/item-customer";
 import { extOf, mediaKindOf, inspectionMediaFilename, IMAGE_EXTS, VIDEO_EXTS, type InspectionMediaKind } from "@/lib/inspection-media";
 import { db } from "@/db";
 import { comparePoNo } from "@/lib/po-sort";
@@ -1587,6 +1588,7 @@ export async function createPackingList(input: CreatePackingListInput): Promise<
       customerPoNo: item.customerPoNo ?? null,
     })),
   );
+  await fillPackingListItemCustomers(pl.id);
 
   await autoLinkReplacementsForPackingList(pl.id, orgId, userId);
 
@@ -3126,6 +3128,7 @@ export async function decidePackingListRevision(revisionId: string, decision: "a
         customerPoNo: item.customerPoNo,
       })),
     );
+    await fillPackingListItemCustomers(pl.id);
     // A newly added line may be the make-good for an earlier return
     await autoLinkReplacementsForPackingList(pl.id, pl.organizationId, userId);
   }

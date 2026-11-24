@@ -1,5 +1,6 @@
 "use server";
 
+import { fillInvoiceItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
   invoice,
@@ -764,6 +765,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
         setQty: i.setQty ?? null,
       })),
     );
+    await fillInvoiceItemCustomers(row.id);
   }
 
   if (input.expenses.length > 0) {
@@ -871,6 +873,7 @@ export async function updateInvoice(input: UpdateInvoiceInput): Promise<InvoiceR
         setQty: i.setQty ?? null,
       })),
     );
+    await fillInvoiceItemCustomers(input.id);
   }
 
   if (input.expenses.length > 0) {
@@ -1079,6 +1082,7 @@ export async function createInvoiceManual(input: CreateInvoiceManualInput): Prom
         setQty: i.setQty ?? null,
       })),
     );
+    await fillInvoiceItemCustomers(row.id);
   }
 
   if (input.expenses.length > 0) {

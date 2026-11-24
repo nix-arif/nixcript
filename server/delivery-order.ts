@@ -1,5 +1,6 @@
 "use server";
 
+import { fillDeliveryOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
   deliveryOrder,
@@ -1515,6 +1516,7 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         takenFromLabel: input.isCaseDo ? (i.takenFromLabel || null) : null,
       })),
     );
+    await fillDeliveryOrderItemCustomers(row.id);
   }
 
   if (input.isCaseDo && input.customerItems?.length) {
@@ -1600,6 +1602,7 @@ export async function updateDeliveryOrder(input: UpdateDeliveryOrderInput): Prom
         unitId: i.unitId ?? null,
       })),
     );
+    await fillDeliveryOrderItemCustomers(input.id);
   }
   return row;
 }
@@ -1718,6 +1721,7 @@ export async function recordCaseActuals(doId: string, items: Omit<DeliveryOrderI
       loanPurpose: i.loanOut !== false && i.loanPurpose && i.loanPurpose in LOAN_PURPOSE ? i.loanPurpose : null,
       takenFromLabel: i.takenFromLabel || null,
     })));
+    await fillDeliveryOrderItemCustomers(doId);
     try {
       await deductCaseItems({ orgId, userId, doId, doNo: d.doNo, specialistId: d.applicationSpecialistId, customerId: d.customerId, items: rows, stockNote: opts?.stockNote });
     } catch (e) {

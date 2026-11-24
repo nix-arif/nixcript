@@ -3066,6 +3066,7 @@ export const purchaseOrderItem = pgTable(
     customerName: text("customer_name"),
     customerOrganization: text("customer_organization"),
     customerPoNo: text("customer_po_no"),
+    sourceCustomerPoId: text("source_customer_po_id"), // the CPO behind customerPoNo (lib/trace/item-customer.ts)
 
     // Sourcing: trading | oem — mirrors product.sourcingType /
     // salesOrderItem.sourcingType. Resolved once at line-creation time from
@@ -3212,6 +3213,10 @@ export const purchaseRequisitionItem = pgTable(
     cpoNo: text("cpo_no"),
     customerName: text("customer_name"),
     customerOrganization: text("customer_organization"),
+    // ids behind cpoNo / customerName / customerOrganization (lib/trace/item-customer.ts)
+    sourceCustomerPoId: text("source_customer_po_id"),
+    customerId: text("customer_id"),
+    customerOrganizationId: text("customer_organization_id"),
     setGroupId: text("set_group_id"),
     setGroupLabel: text("set_group_label"),
     setQty: text("set_qty"),
@@ -3451,6 +3456,7 @@ export const packingListItem = pgTable(
     customerName: text("customer_name"),
     customerOrganization: text("customer_organization"),
     customerPoNo: text("customer_po_no"),
+    sourceCustomerPoId: text("source_customer_po_id"), // the CPO behind customerPoNo (lib/trace/item-customer.ts)
 
     // In-progress inspection state, autosaved line-by-line as soon as
     // someone edits it — this IS the draft; there's no separate draft
@@ -3824,6 +3830,14 @@ export const deliveryOrderItem = pgTable(
     custQty: text("cust_qty"),
     custUom: text("cust_uom"),
     custReason: text("cust_reason"),
+    // Which customer PO / customer this line is for — copied from its source
+    // line (lib/trace/item-customer.ts), so it survives an SO combining CPOs.
+    sourceCustomerPoId: text("source_customer_po_id"),
+    sourceCustomerPoNo: text("source_customer_po_no"),
+    customerId: text("customer_id"),
+    customerOrganizationId: text("customer_organization_id"),
+    customerName: text("customer_name"),
+    customerOrganization: text("customer_organization"),
     // Normal DO: quantity the customer sent back so far (partial returns) — see delivery_order_return
     returnedQty: text("returned_qty"),
     // Case DO: where this line's stock was taken from when not the specialist's
@@ -4012,6 +4026,14 @@ export const invoiceItem = pgTable(
     setGroupId: text("set_group_id"),
     setGroupLabel: text("set_group_label"),
     setQty: text("set_qty"),
+    // Which customer PO / customer this line is for — copied from its source
+    // line (lib/trace/item-customer.ts), so it survives an SO combining CPOs.
+    sourceCustomerPoId: text("source_customer_po_id"),
+    sourceCustomerPoNo: text("source_customer_po_no"),
+    customerId: text("customer_id"),
+    customerOrganizationId: text("customer_organization_id"),
+    customerName: text("customer_name"),
+    customerOrganization: text("customer_organization"),
 
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

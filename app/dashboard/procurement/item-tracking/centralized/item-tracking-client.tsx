@@ -499,8 +499,13 @@ export function ItemTrackingClient() {
                   <span className="block space-y-0.5">
                     <span className="flex flex-wrap items-center gap-1.5">
                       <span className="font-mono text-[13px] font-medium text-foreground">{l.po.poNo ?? l.po.prNo ?? "—"}</span>
-                      <span className="text-[10px] text-muted-foreground">line {l.rowNo}</span>
                       <Chip className={statusChip(l.po.status)}>{l.po.status}</Chip>
+                    </span>
+                    {/* which line of that PO — the same badge as on Pending from Supplier */}
+                    <span className="block">
+                      <span className="inline-block rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title={`Line ${l.rowNo} of this PO`}>
+                        Line {l.rowNo}
+                      </span>
                     </span>
                     <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground">
                       <span className="inline-flex items-center gap-1"><CalendarIcon className="w-3 h-3" />{fmtDate(l.po.poDate)}</span>

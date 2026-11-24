@@ -1,5 +1,6 @@
 "use server";
 
+import { fillPurchaseOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
   purchaseOrder,
@@ -289,6 +290,7 @@ export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string)
       totalPrice: share.toFixed(2),
       currency: "MYR", // invoice carries no currency field of its own — this app is MYR-only throughout
     });
+    await fillPurchaseOrderItemCustomers(poId);
 
     await maybeCreateIntercompanySalesOrder(poId);
 
@@ -1509,6 +1511,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
         oemEditedBy: item.oemEditedBy ?? null,
       })),
     );
+    await fillPurchaseOrderItemCustomers(row.id);
   }
 
   if (input.customerPoIds && input.customerPoIds.length > 0) {
@@ -1764,6 +1767,7 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
         oemEditedBy: item.oemEditedBy ?? null,
       })),
     );
+    await fillPurchaseOrderItemCustomers(input.id);
   }
 
   // Sync customer PO junction

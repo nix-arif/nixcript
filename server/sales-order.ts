@@ -1,5 +1,6 @@
 "use server";
 
+import { fillSalesOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
   salesOrder,
@@ -718,6 +719,7 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
         isAdditional: item.isAdditional ?? false,
       })),
     );
+    await fillSalesOrderItemCustomers(row.id);
   }
 
   // Determine correct initial status now that items are in the DB (product code
@@ -1072,6 +1074,7 @@ async function applySalesOrderUpdate(
         isAdditional: item.isAdditional ?? false,
       })),
     );
+    await fillSalesOrderItemCustomers(input.id);
   }
 
   // Keep each CPO's own link in step with the SO's list: added CPOs point here,
