@@ -1,5 +1,6 @@
 "use client";
 
+import { SoStockChip } from "@/components/so-stock-chip";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -190,6 +191,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
                         <Highlight text={o.soNo} query={search} />
                       </span>
                       <StatusBadge status={o.status} />
+                      <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={o.organizationName} query={search} />
                       </span>

@@ -35,7 +35,6 @@ import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
 import { performStockCheckAndReserve } from "@/server/stock-reservation";
-import { soStockStatusFor } from "@/lib/inventory/so-stock-status";
 import { Resend } from "resend";
 import { testingSubject } from "@/lib/testing-mode";
 import { createNotification, getSoApprovers } from "@/server/notifications";
@@ -640,7 +639,12 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
       urgentAuthNotes: input.urgentAuthNotes ?? null,
       sourceOrganizationId: input.sourceOrganizationId ?? null,
       sourcePurchaseOrderId: input.sourcePurchaseOrderId ?? null,
-      status: "pending-do",
+      // Every new SO starts as a draft — editable, not yet submitted. Whether
+      // it can ship from stock ("Pending DO") or needs purchasing ("Pending
+      // PR") is decided at approval, when stock is reserved
+      // (performStockCheckAndReserve → stockReservationStatus), and shown on
+      // the confirmed SO (lib/sales-order/stock-stage.ts).
+      status: "draft",
       createdBy: userId,
     })
     .returning();
@@ -692,17 +696,6 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
         isAdditional: item.isAdditional ?? false,
       })),
     );
-  }
-
-  // Determine correct initial status now that items are in the DB (product code
-  // resolution requires a DB lookup against this org's catalog). Not
-  // getSoStockStatus: that requires orgId to be the caller's active org, which
-  // the intercompany path (SO created in the receiving org) never is — it threw,
-  // and the CPO back-link below never ran. Both callers authorize orgId first.
-  const soStatus = await soStockStatusFor(orgId, row.id);
-  if (soStatus !== "pending-do") {
-    await db.update(salesOrder).set({ status: soStatus }).where(eq(salesOrder.id, row.id));
-    row.status = soStatus;
   }
 
   // Back-link: update all linked Customer POs so they point to this new SO

@@ -636,6 +636,7 @@ export interface CustomerPoTrackingData {
     id: string; soNo: string; status: string;
     createdAt: Date; grandTotal: string | null;
     deliveryDate: Date | null;
+    stockReservationStatus: string | null;
   } | null;
   internalPos: { id: string; prNo: string | null; poNo: string | null; status: string; createdAt: Date; grandTotal: string | null; supplierId: string | null }[];
   // Purchase requisitions raised from the SO (draft | submitted | approved | ordered | cancelled).
@@ -789,7 +790,7 @@ async function fetchCpoTrackingData(cpo: CustomerPo, viewer: { userId: string; o
       ? db.select({
           id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status,
           createdAt: salesOrder.createdAt, grandTotal: salesOrder.grandTotal,
-          deliveryDate: salesOrder.deliveryDate,
+          deliveryDate: salesOrder.deliveryDate, stockReservationStatus: salesOrder.stockReservationStatus,
         }).from(salesOrder).where(eq(salesOrder.id, cpo.salesOrderId))
       : Promise.resolve([]),
     db.select({ purchaseOrderId: purchaseOrderCustomerPo.purchaseOrderId })

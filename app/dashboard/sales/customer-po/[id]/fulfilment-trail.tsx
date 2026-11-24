@@ -5,6 +5,7 @@
 // and the centralized twin). The detail page keeps only the compact Progress
 // summary, built from the same trailStates() so the two never disagree.
 
+import { SoStockChip } from "@/components/so-stock-chip";
 import { navigateBack } from "@/hooks/use-back";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -488,7 +489,7 @@ export function FulfilmentTrailClient({
                   docNo={so.soNo}
                   statusLabel={soStatusCfg(so.status).label}
                   statusColor={soStatusCfg(so.status).color}
-                  meta={fmtDate(so.createdAt)}
+                  meta={<span className="flex items-center gap-2"><SoStockChip status={so.status} stockReservationStatus={so.stockReservationStatus} />{fmtDate(so.createdAt)}</span>}
                   onClick={() => router.push(`/dashboard/sales/order/${so.id}`)}
                   actions={actions?.so}
                   busy={busyId === so.id}

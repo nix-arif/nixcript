@@ -1,5 +1,6 @@
 "use client";
 
+import { SoStockChip } from "@/components/so-stock-chip";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
@@ -311,6 +312,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                         <Highlight text={o.soNo} query={search} />
                       </span>
                       <StatusBadge status={o.status} />
+                      <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} />
                       {o.soType === "proforma" && (
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 capitalize hidden sm:inline">
                           {o.proformaReason ?? "Pro-forma"}
