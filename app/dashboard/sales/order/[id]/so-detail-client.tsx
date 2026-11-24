@@ -75,6 +75,7 @@ export function SalesOrderDetailClient({
   organizationName,
   businessType = "trading",
   recallBlockers = [],
+  deleteBlocker = null,
 }: {
   order: SalesOrderWithItems;
   linkedQuotations?: QuotationBasic[];
@@ -93,6 +94,8 @@ export function SalesOrderDetailClient({
   businessType?: string;
   // Active documents raised from this SO — Recall is hidden while any exist.
   recallBlockers?: string[];
+  // Why this SO can't be deleted (linked documents) — Delete is hidden when set.
+  deleteBlocker?: string | null;
 }) {
   // Product database descriptions, to point out items whose description was changed on the order
   const dbLookup = useDbDescriptionLookup(order.items.map((i) => refOf(i as unknown as DbDescItem, businessType !== "trading")));
@@ -395,7 +398,7 @@ export function SalesOrderDetailClient({
                     <PencilIcon className="w-3.5 h-3.5" /> Edit
                   </Button>
                 )}
-                {isOwner && can("sales-order:delete") && (
+                {isOwner && can("sales-order:delete") && !deleteBlocker && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>
@@ -404,7 +407,7 @@ export function SalesOrderDetailClient({
             ) : status === "cancelled" ? (
               <>
                 <StatusBadge status={status} />
-                {isOwner && can("sales-order:delete") && (
+                {isOwner && can("sales-order:delete") && !deleteBlocker && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
                     <TrashIcon className="w-3.5 h-3.5" /> Delete
                   </Button>

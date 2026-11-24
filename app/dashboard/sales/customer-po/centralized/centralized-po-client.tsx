@@ -41,9 +41,13 @@ function StatusBadge({ status }: { status: string }) {
 
 interface Props {
   initialPos: CentralizedCustomerPo[];
+  // "external": real customers' POs. "intercompany": CPOs auto-created when a
+  // sibling org issued a PO to this one — listed on their own page.
+  kind?: "external" | "intercompany";
 }
 
-export function CentralizedCustomerPoClient({ initialPos }: Props) {
+export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: Props) {
+  const isIc = kind === "intercompany";
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
   // Server data re-sent (live refresh / router.refresh): show it
@@ -73,7 +77,7 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      setPos(await getCustomerPosCentralized());
+      setPos(await getCustomerPosCentralized(kind));
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "Failed to refresh");
     } finally {
@@ -84,8 +88,12 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
   return (
     <div className="p-6">
       <PageHeader
-        title="Centralized Customer POs"
-        description="Every Customer PO recorded across all organizations under the same owner"
+        title={isIc ? "Centralized Intercompany POs" : "Centralized Customer POs"}
+        description={
+          isIc
+            ? "POs one of your organizations issued to another — auto-recorded as a Customer PO in the receiving organization"
+            : "Every external Customer PO recorded across all organizations under the same owner (intercompany POs are listed separately)"
+        }
         action={
           <Button variant="outline" size="sm" className="gap-1.5" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCwIcon className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
@@ -100,7 +108,7 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by PO no., customer, QT no., SO no., organization…"
+            placeholder={isIc ? "Search by PO no., ordering org, SO no., receiving org…" : "Search by PO no., customer, QT no., SO no., organization…"}
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -144,9 +152,11 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <LayersIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium mb-1">No customer POs found</div>
+          <div className="text-sm font-medium mb-1">{isIc ? "No intercompany POs found" : "No customer POs found"}</div>
           <div className="text-xs">
-            {pos.length === 0 ? "No Customer POs recorded across any of your organizations yet." : "No records match your filters."}
+            {pos.length === 0
+              ? isIc ? "None of your organizations has issued a PO to another yet." : "No Customer POs recorded across any of your organizations yet."
+              : "No records match your filters."}
           </div>
         </div>
       ) : (
@@ -173,7 +183,7 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />
                       </span>
-                      {p.isIntercompany && (
+                      {p.isIntercompany && !isIc && (
                         <span
                           className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-800"
                           title="Auto-created from a sibling organization's purchase order — not a real external customer"
@@ -203,7 +213,8 @@ export function CentralizedCustomerPoClient({ initialPos }: Props) {
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       {snap?.name && (
                         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                          <UserIcon className="w-3 h-3" />
+                          {isIc ? <Link2Icon className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
+                          {isIc && "From "}
                           <Highlight text={[snap.title, snap.name].filter(Boolean).join(" ")} query={search} />
                         </span>
                       )}

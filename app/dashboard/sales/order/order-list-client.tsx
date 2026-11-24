@@ -58,9 +58,11 @@ interface Props {
   permissions: string[];
   currentUserId: string;
   pendingCpos?: CustomerPoSearchResult[];
+  // SO id → why it can't be deleted (linked documents). Delete is hidden for these.
+  deleteBlockers?: Record<string, string>;
 }
 
-export function SalesOrderListClient({ initialOrders, permissions, currentUserId, pendingCpos = [] }: Props) {
+export function SalesOrderListClient({ initialOrders, permissions, currentUserId, pendingCpos = [], deleteBlockers = {} }: Props) {
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -383,7 +385,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                           <PencilIcon className="w-3.5 h-3.5" />
                         </Button>
                       )}
-                      {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
+                      {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !deleteBlockers[o.id] && (
                         <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
                           disabled={deleting === o.id}
                           onClick={() => handleDelete(o.id, o.soNo)}>

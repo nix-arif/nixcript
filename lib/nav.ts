@@ -58,6 +58,7 @@ export const navConfig: NavGroup[] = [
     icon: React.createElement(LayersIcon),
     items: [
       { title: "Customer POs", url: "/dashboard/sales/customer-po/centralized", permission: "customer-po:read:centralized" },
+      { title: "Intercompany POs", url: "/dashboard/sales/customer-po/centralized/intercompany", permission: "customer-po:read:centralized" },
       { title: "Sales Orders", url: "/dashboard/sales/order/centralized", permission: "sales-order:read:centralized" },
       { title: "Supplier POs", url: "/dashboard/procurement/purchase-order/centralized", permission: "purchase-order:read:centralized" },
       { title: "Packing Lists", url: "/dashboard/procurement/packing-list/centralized", permission: "packing-list:read:centralized" },

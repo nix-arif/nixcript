@@ -20,7 +20,7 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
-import { eq, and, desc, asc, ilike, inArray, or, isNull, notInArray, ne, sql } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, inArray, or, isNull, isNotNull, notInArray, ne, sql } from "drizzle-orm";
 import { createNotification, getSoApprovers } from "@/server/notifications";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -251,9 +251,11 @@ export type CentralizedCustomerPo = CustomerPo & { organizationName: string; isI
 // just the caller's own active org. This is exactly where an intercompany
 // CPO is most likely to confuse someone — the "customer" on it is the name
 // of one of the very orgs also being aggregated in this same list — hence
-// isIntercompany, so the UI can badge it instead of it looking like a
-// duplicate or a data error.
-export async function getCustomerPosCentralized(): Promise<CentralizedCustomerPo[]> {
+// isIntercompany. The two kinds are listed on separate pages: "external"
+// (real customers — the centralized Customer POs page) and "intercompany"
+// (auto-created from a sibling org's PO — the centralized Intercompany POs
+// page), so neither list mixes the other in.
+export async function getCustomerPosCentralized(kind: "external" | "intercompany" = "external"): Promise<CentralizedCustomerPo[]> {
   const { orgId, userId } = await requireAccess("customer-po:read:centralized");
   const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
 
@@ -262,7 +264,11 @@ export async function getCustomerPosCentralized(): Promise<CentralizedCustomerPo
     .from(customerPurchaseOrder)
     .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
     .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
-    .where(and(inArray(customerPurchaseOrder.organizationId, ownerOrgIds), visibleTo(userId)))
+    .where(and(
+      inArray(customerPurchaseOrder.organizationId, ownerOrgIds),
+      visibleTo(userId),
+      kind === "intercompany" ? isNotNull(customer.linkedOrganizationId) : isNull(customer.linkedOrganizationId),
+    ))
     .orderBy(...cpoNewestFirst());
 
   return rows.map(({ po, organizationName, linkedOrganizationId }) => ({ ...po, organizationName, isIntercompany: !!linkedOrganizationId }));
@@ -653,19 +659,20 @@ export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTr
 // controls — for members explicitly granted customer-po:read:centralized.
 export async function getCustomerPoForTrackingCentralized(
   id: string,
-): Promise<(CustomerPoTrackingData & { organizationName: string }) | null> {
+): Promise<(CustomerPoTrackingData & { organizationName: string; isIntercompany: boolean }) | null> {
   const { orgId, userId } = await requireAccess("customer-po:read:centralized");
   const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
 
   const [row] = await db
-    .select({ po: customerPurchaseOrder, organizationName: organization.name })
+    .select({ po: customerPurchaseOrder, organizationName: organization.name, linkedOrganizationId: customer.linkedOrganizationId })
     .from(customerPurchaseOrder)
     .innerJoin(organization, eq(organization.id, customerPurchaseOrder.organizationId))
+    .leftJoin(customer, eq(customer.id, customerPurchaseOrder.customerId))
     .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
 
   if (!row) return null;
   const data = await fetchCpoTrackingData(row.po);
-  return { ...data, organizationName: row.organizationName };
+  return { ...data, organizationName: row.organizationName, isIntercompany: !!row.linkedOrganizationId };
 }
 
 async function fetchCpoTrackingData(cpo: CustomerPo): Promise<CustomerPoTrackingData> {

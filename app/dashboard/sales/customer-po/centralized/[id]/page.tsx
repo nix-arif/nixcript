@@ -15,12 +15,12 @@ export default async function CentralizedCustomerPoDetailPage({ params }: { para
   if (!data) notFound();
 
   const canEdit = permissions.includes("*") || permissions.includes("customer-po:update:centralized");
-  const { organizationName, ...tracking } = data;
+  const { organizationName, isIntercompany, ...tracking } = data;
   return (
     <CustomerPoDetailClient
       data={tracking}
       permissions={[]}
-      backHref="/dashboard/sales/customer-po/centralized"
+      backHref={isIntercompany ? "/dashboard/sales/customer-po/centralized/intercompany" : "/dashboard/sales/customer-po/centralized"}
       organizationName={organizationName}
       editHref={canEdit ? `/dashboard/sales/customer-po/centralized/${id}/edit` : undefined}
     />

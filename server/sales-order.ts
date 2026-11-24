@@ -1042,26 +1042,8 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | { ok:
   if (existing.status === "submitted" || existing.status === "confirmed" || existing.status === "fulfilled")
     return { ok: false, error: "Only draft or cancelled orders can be deleted" };
 
-  const downstream = await activeSalesOrderDownstream(orgId, id);
-  if (downstream.length > 0) {
-    return {
-      ok: false,
-      error: `Can't delete ${existing.soNo} — documents raised from it are still active: ${downstream.join(", ")}. Cancel those first, or cancel this order instead of deleting it.`,
-    };
-  }
-
-  // References nothing below unlinks — the database refuses to delete an SO
-  // any of these still point at, even when the referencing record is
-  // cancelled. Cancel the SO instead so its trail stays intact.
-  const [hasPr] = await db.select({ id: purchaseRequisition.id }).from(purchaseRequisition).where(eq(purchaseRequisition.salesOrderId, id)).limit(1);
-  if (hasPr) return { ok: false, error: `Can't delete ${existing.soNo} — a purchase requisition was raised from it. Cancel the order instead.` };
-
-  const [hasConsignment] = await db.select({ id: consignment.id }).from(consignment).where(eq(consignment.soId, id)).limit(1);
-  const [hasConsignHeader] = await db.select({ id: consignHeader.id }).from(consignHeader).where(eq(consignHeader.soId, id)).limit(1);
-  if (hasConsignment || hasConsignHeader) return { ok: false, error: `Can't delete ${existing.soNo} — it has consignment records. Cancel the order instead.` };
-
-  const [hasRevision] = await db.select({ soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.originalSoId, id)).limit(1);
-  if (hasRevision) return { ok: false, error: `Can't delete ${existing.soNo} — ${hasRevision.soNo} is a revision of it. Cancel the order instead.` };
+  const blocker = (await salesOrderDeleteBlockers(orgId, [{ id, soNo: existing.soNo }])).get(id);
+  if (blocker) return { ok: false, error: blocker };
 
   // Delete R2 supplier quotation file if present
   if (existing.supplierQuotationKey) {
@@ -1354,44 +1336,100 @@ export async function rejectSalesOrder(id: string): Promise<void> {
 
 // ── Recall (confirmed → draft) ────────────────────────────────────────────
 
-// Documents raised from this SO that are still live. Recalling the SO while
-// any exist would leave them (and, through an intercompany PO, a sibling
-// org's auto-created SO) running against an order that's back in draft —
-// nothing propagates a recall or a later edit down the chain.
-async function activeSalesOrderDownstream(orgId: string, soId: string): Promise<string[]> {
+// Documents raised from these SOs that are still live, keyed by SO id (SOs
+// with none are absent). Recalling an SO while any exist would leave them
+// (and, through an intercompany PO, a sibling org's auto-created SO) running
+// against an order that's back in draft — nothing propagates a recall or a
+// later edit down the chain. Batched so list pages can check every row at once.
+async function activeSalesOrderDownstreamMany(orgId: string, soIds: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (soIds.length === 0) return out;
+  const add = (soId: string | null, label: string) => {
+    if (!soId) return;
+    if (!out.has(soId)) out.set(soId, []);
+    out.get(soId)!.push(label);
+  };
+
   const prs = await db
-    .select({ id: purchaseRequisition.id, prNo: purchaseRequisition.prNo, status: purchaseRequisition.status })
+    .select({ id: purchaseRequisition.id, prNo: purchaseRequisition.prNo, status: purchaseRequisition.status, salesOrderId: purchaseRequisition.salesOrderId })
     .from(purchaseRequisition)
-    .where(and(eq(purchaseRequisition.salesOrderId, soId), eq(purchaseRequisition.organizationId, orgId)));
+    .where(and(inArray(purchaseRequisition.salesOrderId, soIds), eq(purchaseRequisition.organizationId, orgId)));
+  const soOfPr = new Map(prs.map((p) => [p.id, p.salesOrderId]));
   const prIds = prs.map((p) => p.id);
 
   const pos = await db
-    .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo })
+    .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, salesOrderId: purchaseOrder.salesOrderId, purchaseRequisitionId: purchaseOrder.purchaseRequisitionId })
     .from(purchaseOrder)
     .where(and(
       eq(purchaseOrder.organizationId, orgId),
       ne(purchaseOrder.status, "cancelled"),
       prIds.length > 0
-        ? or(eq(purchaseOrder.salesOrderId, soId), inArray(purchaseOrder.purchaseRequisitionId, prIds))
-        : eq(purchaseOrder.salesOrderId, soId),
+        ? or(inArray(purchaseOrder.salesOrderId, soIds), inArray(purchaseOrder.purchaseRequisitionId, prIds))
+        : inArray(purchaseOrder.salesOrderId, soIds),
     ));
 
   const dos = await db
-    .select({ doNo: deliveryOrder.doNo })
+    .select({ doNo: deliveryOrder.doNo, salesOrderId: deliveryOrder.salesOrderId })
     .from(deliveryOrder)
-    .where(and(eq(deliveryOrder.salesOrderId, soId), eq(deliveryOrder.organizationId, orgId)));
+    .where(and(inArray(deliveryOrder.salesOrderId, soIds), eq(deliveryOrder.organizationId, orgId)));
 
   const invs = await db
-    .select({ invoiceNo: invoice.invoiceNo })
+    .select({ invoiceNo: invoice.invoiceNo, salesOrderId: invoice.salesOrderId })
     .from(invoice)
-    .where(and(eq(invoice.salesOrderId, soId), eq(invoice.organizationId, orgId), ne(invoice.status, "cancelled")));
+    .where(and(inArray(invoice.salesOrderId, soIds), eq(invoice.organizationId, orgId), ne(invoice.status, "cancelled")));
 
-  return [
-    ...prs.filter((p) => p.status !== "cancelled").map((p) => `PR ${p.prNo}`),
-    ...pos.map((p) => `PO ${p.poNo ?? p.prNo ?? "(unnumbered)"}`),
-    ...dos.map((d) => `DO ${d.doNo}`),
-    ...invs.map((i) => `Invoice ${i.invoiceNo}`),
-  ];
+  for (const p of prs) if (p.status !== "cancelled") add(p.salesOrderId, `PR ${p.prNo}`);
+  for (const p of pos) {
+    const soId = p.salesOrderId && soIds.includes(p.salesOrderId) ? p.salesOrderId : (p.purchaseRequisitionId ? soOfPr.get(p.purchaseRequisitionId) ?? null : null);
+    add(soId, `PO ${p.poNo ?? p.prNo ?? "(unnumbered)"}`);
+  }
+  for (const d of dos) add(d.salesOrderId, `DO ${d.doNo}`);
+  for (const i of invs) add(i.salesOrderId, `Invoice ${i.invoiceNo}`);
+  return out;
+}
+
+async function activeSalesOrderDownstream(orgId: string, soId: string): Promise<string[]> {
+  return (await activeSalesOrderDownstreamMany(orgId, [soId])).get(soId) ?? [];
+}
+
+// Why each of these SOs can't be deleted, keyed by SO id (deletable ones are
+// absent): active downstream documents, or references the delete doesn't
+// unlink — the database refuses to delete an SO that a PR, consignment or
+// revision still points at, even a cancelled one. Cancelling the SO instead
+// keeps its trail intact.
+async function salesOrderDeleteBlockers(orgId: string, sos: { id: string; soNo: string }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (sos.length === 0) return out;
+  const ids = sos.map((s) => s.id);
+
+  const active = await activeSalesOrderDownstreamMany(orgId, ids);
+  const prSoIds = new Set((await db.select({ soId: purchaseRequisition.salesOrderId }).from(purchaseRequisition).where(inArray(purchaseRequisition.salesOrderId, ids))).map((r) => r.soId));
+  const consignSoIds = new Set([
+    ...(await db.select({ soId: consignment.soId }).from(consignment).where(inArray(consignment.soId, ids))).map((r) => r.soId),
+    ...(await db.select({ soId: consignHeader.soId }).from(consignHeader).where(inArray(consignHeader.soId, ids))).map((r) => r.soId),
+  ]);
+  const revisionOf = new Map((await db.select({ originalSoId: salesOrder.originalSoId, soNo: salesOrder.soNo }).from(salesOrder).where(inArray(salesOrder.originalSoId, ids))).map((r) => [r.originalSoId, r.soNo]));
+
+  for (const so of sos) {
+    const live = active.get(so.id);
+    if (live?.length) out.set(so.id, `Can't delete ${so.soNo} — documents raised from it are still active: ${live.join(", ")}. Cancel those first, or cancel this order instead of deleting it.`);
+    else if (prSoIds.has(so.id)) out.set(so.id, `Can't delete ${so.soNo} — a purchase requisition was raised from it. Cancel the order instead.`);
+    else if (consignSoIds.has(so.id)) out.set(so.id, `Can't delete ${so.soNo} — it has consignment records. Cancel the order instead.`);
+    else if (revisionOf.has(so.id)) out.set(so.id, `Can't delete ${so.soNo} — ${revisionOf.get(so.id)} is a revision of it. Cancel the order instead.`);
+  }
+  return out;
+}
+
+// Read-only: why each of these SOs can't be deleted (deletable ones absent).
+// The list and detail pages hide Delete for these; deleteSalesOrder re-checks.
+export async function getSalesOrderDeleteBlockers(soIds: string[]): Promise<Record<string, string>> {
+  const { orgId } = await requireAccess("sales-order:read");
+  if (soIds.length === 0) return {};
+  const sos = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo })
+    .from(salesOrder)
+    .where(and(inArray(salesOrder.id, soIds), eq(salesOrder.organizationId, orgId)));
+  return Object.fromEntries(await salesOrderDeleteBlockers(orgId, sos));
 }
 
 // Read-only: what would stop this SO being recalled. The detail page hides

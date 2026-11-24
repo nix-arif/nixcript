@@ -263,9 +263,12 @@ export function PurchaseOrderDetailClient({
   hidePricing = false,
   canEditPoNumber,
   recallBlockers = [],
+  deleteBlocker = null,
 }: {
   // Active documents raised from this PO — Recall is hidden while any exist.
   recallBlockers?: string[];
+  // Why this PO can't be deleted (linked documents) — Delete is hidden when set.
+  deleteBlocker?: string | null;
   order: PurchaseOrderWithItems;
   permissions: string[];
   currentUserId: string;
@@ -448,7 +451,7 @@ export function PurchaseOrderDetailClient({
                 <PencilIcon className="w-3.5 h-3.5" /> Edit
               </Button>
             )}
-            {isOwner && !order.approvedAt && (status === "draft" || status === "cancelled") && (
+            {isOwner && !order.approvedAt && (status === "draft" || status === "cancelled") && !deleteBlocker && (
               <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={deleting} onClick={handleDelete}>
                 <Trash2Icon className="w-3.5 h-3.5" /> Delete
               </Button>
