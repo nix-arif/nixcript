@@ -4,7 +4,9 @@
 // "Re-check stock":
 //   reserved      → "Pending DO" — the stock is held, ready to deliver
 //   insufficient  → "Pending PR" — something is short, needs purchasing
-// Before approval an SO is a draft (or submitted) and has no stock stage.
+// Before approval it has no stock stage — but a new SO is created as
+// "pending-do" / "pending-pr" (its stock outlook) without being submitted, so
+// those get a "Draft" tag: isUnsubmittedSo.
 
 export type SoStockStage = "pending-do" | "pending-pr";
 
@@ -26,4 +28,15 @@ export const SO_STOCK_STAGE: Record<SoStockStage, { label: string; className: st
     className: "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400",
     title: "Approved but stock is short — needs a purchase requisition",
   },
+};
+
+/** Created but not yet submitted: status "pending-do" / "pending-pr". */
+export function isUnsubmittedSo(status: string): boolean {
+  return status === "pending-do" || status === "pending-pr";
+}
+
+export const SO_DRAFT_TAG = {
+  label: "Draft",
+  className: "bg-slate-100 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300",
+  title: "Not submitted for approval yet — can still be edited",
 };

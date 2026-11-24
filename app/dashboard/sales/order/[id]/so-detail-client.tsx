@@ -415,8 +415,15 @@ export function SalesOrderDetailClient({
                 <PackageIcon className="w-3.5 h-3.5" /> Create Consignment
               </Button>
             )}
-            {status === "draft" ? (
+            {/* draft, or created as pending-do / pending-pr but not yet submitted: still a draft */}
+            {status === "draft" || status === "pending-do" || status === "pending-pr" ? (
               <>
+                {status !== "draft" && (
+                  <>
+                    <StatusBadge status={status} />
+                    <SoStockChip status={status} stockReservationStatus={stockStatus} />
+                  </>
+                )}
                 {showEdit && (
                   <Button variant="outline" size="sm" onClick={() => router.push(resolvedEditHref)} className="gap-1.5">
                     <PencilIcon className="w-3.5 h-3.5" /> Edit

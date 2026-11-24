@@ -343,7 +343,7 @@ function IntercompanyLegBody({ leg }: { leg: IntercompanyLeg }) {
             docNo={leg.so.soNo}
             statusLabel={soCfg.label}
             statusColor={soCfg.color}
-            meta={fmtDate(leg.so.createdAt)}
+            meta={<span className="flex items-center gap-2"><SoStockChip status={leg.so.status} stockReservationStatus={null} />{fmtDate(leg.so.createdAt)}</span>}
             onClick={leg.so.href ? () => router.push(leg.so!.href!) : undefined}
           />
         ) : (

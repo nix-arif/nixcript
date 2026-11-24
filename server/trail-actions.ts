@@ -60,7 +60,8 @@ export async function getTrailActions(cpoId: string): Promise<TrailActionMap | n
       const b = await safe(() => getSalesOrderRecallBlockers(so.id));
       if (b) out.so.push(act("recall", b.length ? `Can't recall — active documents raised from it: ${b.join(", ")}` : null));
     }
-    if (!["draft", "fulfilled", "cancelled"].includes(so.status) && can("sales-order:approve")) {
+    // not for an unsubmitted SO (draft / pending-do / pending-pr): that's deleted, not cancelled
+    if (!["draft", "pending-do", "pending-pr", "fulfilled", "cancelled"].includes(so.status) && can("sales-order:approve")) {
       const b = await safe(() => getSalesOrderCancelBlocker(so.id));
       if (b !== undefined) out.so.push(act("cancel", b));
     }

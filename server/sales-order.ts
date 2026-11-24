@@ -35,6 +35,7 @@ import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
 import { performStockCheckAndReserve } from "@/server/stock-reservation";
+import { soStockStatusFor } from "@/lib/inventory/so-stock-status";
 import { Resend } from "resend";
 import { testingSubject } from "@/lib/testing-mode";
 import { createNotification, getSoApprovers } from "@/server/notifications";
@@ -639,12 +640,9 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
       urgentAuthNotes: input.urgentAuthNotes ?? null,
       sourceOrganizationId: input.sourceOrganizationId ?? null,
       sourcePurchaseOrderId: input.sourcePurchaseOrderId ?? null,
-      // Every new SO starts as a draft — editable, not yet submitted. Whether
-      // it can ship from stock ("Pending DO") or needs purchasing ("Pending
-      // PR") is decided at approval, when stock is reserved
-      // (performStockCheckAndReserve → stockReservationStatus), and shown on
-      // the confirmed SO (lib/sales-order/stock-stage.ts).
-      status: "draft",
+      // Starts as "pending-do" / "pending-pr" (set below from stock) — not yet
+      // submitted, so it's shown with a "Draft" tag (lib/sales-order/stock-stage.ts).
+      status: "pending-do",
       createdBy: userId,
     })
     .returning();
@@ -696,6 +694,17 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
         isAdditional: item.isAdditional ?? false,
       })),
     );
+  }
+
+  // Determine correct initial status now that items are in the DB (product code
+  // resolution requires a DB lookup against this org's catalog). Not
+  // getSoStockStatus: that requires orgId to be the caller's active org, which
+  // the intercompany path (SO created in the receiving org) never is — it threw,
+  // and the CPO back-link below never ran. Both callers authorize orgId first.
+  const soStatus = await soStockStatusFor(orgId, row.id);
+  if (soStatus !== "pending-do") {
+    await db.update(salesOrder).set({ status: soStatus }).where(eq(salesOrder.id, row.id));
+    row.status = soStatus;
   }
 
   // Back-link: update all linked Customer POs so they point to this new SO
@@ -1495,7 +1504,8 @@ async function releaseSoReservation(orgId: string, soId: string, reservationStat
   }
 }
 
-// Cancels an SO (any status but fulfilled/cancelled). Kept on record, not
+// Cancels a submitted or confirmed SO (an unsubmitted one is edited or
+// deleted instead; fulfilled/cancelled can't be). Kept on record, not
 // deleted. Its Customer PO is unlinked so a new SO can be raised from it —
 // except an intercompany CPO, which is cancelled with the SO (it only exists
 // because of the sibling's PO). Problems come back as a readable message.
@@ -1507,6 +1517,11 @@ export async function cancelSalesOrder(id: string): Promise<{ ok: true } | { ok:
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
   if (!so) return { ok: false, error: "Sales order not found" };
   if (so.status === "fulfilled" || so.status === "cancelled") return { ok: false, error: `${so.soNo} is already ${so.status}` };
+  // Not submitted yet (draft / pending-do / pending-pr): nothing went out, so
+  // it's edited or deleted, not cancelled.
+  if (so.status === "draft" || so.status === "pending-do" || so.status === "pending-pr") {
+    return { ok: false, error: `${so.soNo} hasn't been submitted yet — edit or delete it instead of cancelling` };
+  }
 
   const blocker = await salesOrderCancelBlocker(orgId, so);
   if (blocker) return { ok: false, error: blocker };

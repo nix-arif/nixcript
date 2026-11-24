@@ -36,8 +36,8 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
     getPrsBySoId(id).catch(() => []),
     getSoItemDeliveredQtys(id).catch(() => ({} as Record<string, number>)),
     order.status === "confirmed" ? getSalesOrderRecallBlockers(id).catch(() => []) : Promise.resolve([]),
-    ["draft", "cancelled"].includes(order.status) ? getSalesOrderDeleteBlockers([id]).catch(() => ({} as Record<string, string>)) : Promise.resolve({} as Record<string, string>),
-    !["draft", "fulfilled", "cancelled"].includes(order.status) ? getSalesOrderCancelBlocker(id).catch(() => null) : Promise.resolve(null),
+    ["draft", "pending-do", "pending-pr", "cancelled"].includes(order.status) ? getSalesOrderDeleteBlockers([id]).catch(() => ({} as Record<string, string>)) : Promise.resolve({} as Record<string, string>),
+    !["draft", "pending-do", "pending-pr", "fulfilled", "cancelled"].includes(order.status) ? getSalesOrderCancelBlocker(id).catch(() => null) : Promise.resolve(null),
   ]);
 
   return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} businessType={profile?.businessType ?? "trading"} recallBlockers={recallBlockers} deleteBlocker={deleteBlockers[id] ?? null} cancelBlocker={cancelBlocker} />;
