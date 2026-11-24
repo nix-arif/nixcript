@@ -13,6 +13,10 @@ import { usePathname, useRouter } from "next/navigation";
 // going forward.
 
 const KEY = "nav-history";
+// Set before going back after a delete: Next.js reuses a page's cached copy on
+// back navigation, which would still show the deleted document — so the page
+// we land on is refreshed from the server once (see useNavHistoryTracker).
+const REFRESH_KEY = "nav-refresh-on-arrival";
 const MAX = 50;
 
 function read(): string[] {
@@ -35,14 +39,24 @@ function write(stack: string[]) {
 /** Mount once in the dashboard layout: records every in-app page change. */
 export function useNavHistoryTracker() {
   const pathname = usePathname();
+  const router = useRouter();
   useEffect(() => {
+    try {
+      const target = sessionStorage.getItem(REFRESH_KEY);
+      if (target === pathname) {
+        sessionStorage.removeItem(REFRESH_KEY);
+        router.refresh();
+      }
+    } catch {
+      // storage blocked: the page just shows its cached copy until reloaded
+    }
     const stack = read();
     const last = stack[stack.length - 1];
     if (last === pathname) return; // reload, or a re-render on the same page
     if (stack[stack.length - 2] === pathname) stack.pop(); // went back
     else stack.push(pathname);
     write(stack);
-  }, [pathname]);
+  }, [pathname, router]);
 }
 
 /**
@@ -64,4 +78,21 @@ export function hasInAppHistory(): boolean {
 export function navigateBack(router: { back: () => void; push: (href: string) => void }, fallback: string) {
   if (hasInAppHistory()) router.back();
   else router.push(fallback);
+}
+
+/**
+ * Back, after the current document was deleted: to the previous page — unless
+ * that page also belongs to the deleted document (its edit page, say, which
+ * would now 404), or there's no previous in-app page; then to `fallback`.
+ * `deletedPath` is the deleted document's own path, e.g. /dashboard/sales/order/<id>.
+ */
+export function navigateBackAfterDelete(router: { back: () => void; push: (href: string) => void }, fallback: string, deletedPath: string) {
+  const stack = read();
+  const previous = stack[stack.length - 2];
+  if (previous && previous !== deletedPath && !previous.startsWith(deletedPath + "/")) {
+    try { sessionStorage.setItem(REFRESH_KEY, previous); } catch { /* see REFRESH_KEY */ }
+    router.back();
+  } else {
+    router.push(fallback);
+  }
 }

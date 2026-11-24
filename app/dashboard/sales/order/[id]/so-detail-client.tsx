@@ -1,7 +1,7 @@
 "use client";
 
 import { SoStockChip } from "@/components/so-stock-chip";
-import { navigateBack } from "@/hooks/use-back";
+import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
@@ -188,7 +188,9 @@ export function SalesOrderDetailClient({
         return;
       }
       toast.success("Sales order deleted");
-      router.push("/dashboard/sales/order");
+      // back to wherever we came from (the list, a CPO's trail …) — not to a
+      // page of this SO, which no longer exists
+      navigateBackAfterDelete(router, backHref, window.location.pathname);
     } catch (e: any) {
       toast.error(e.message);
       setDeleting(false);
