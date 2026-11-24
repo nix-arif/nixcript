@@ -1117,7 +1117,10 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | { ok:
     }
   }
 
-  revalidatePath("/dashboard/sales/order");
+  // No revalidatePath here: a revalidating action makes the router re-render
+  // the page it was called from — this deleted document's own page — which
+  // then 404s and strands the user. The caller refreshes or navigates instead
+  // (navigateBackAfterDelete refreshes the page it lands on).
   return { ok: true };
 }
 

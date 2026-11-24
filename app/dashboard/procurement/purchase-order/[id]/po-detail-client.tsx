@@ -1,6 +1,6 @@
 "use client";
 
-import { navigateBack } from "@/hooks/use-back";
+import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { pricingMethodLabel } from "@/lib/intercompany/methods";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -365,7 +365,8 @@ export function PurchaseOrderDetailClient({
         return;
       }
       toast.success("Purchase order deleted");
-      router.push(backHref);
+      // back to wherever we came from — not to a page of this PO, which no longer exists
+      navigateBackAfterDelete(router, backHref, window.location.pathname);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Something went wrong");
       setDeleting(false);

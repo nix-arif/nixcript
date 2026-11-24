@@ -1,6 +1,6 @@
 "use client";
 
-import { navigateBack } from "@/hooks/use-back";
+import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -332,7 +332,8 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
         return;
       }
       toast.success("Requisition deleted");
-      router.push("/dashboard/procurement/requisition");
+      // back to wherever we came from — not to a page of this PR, which no longer exists
+      navigateBackAfterDelete(router, "/dashboard/procurement/requisition", window.location.pathname);
     } catch (e: any) {
       toast.error(e.message);
       setActioning(null);
