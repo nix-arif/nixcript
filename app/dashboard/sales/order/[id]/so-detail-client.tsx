@@ -168,7 +168,12 @@ export function SalesOrderDetailClient({
     if (!confirm(`Delete ${order.soNo}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      await deleteSalesOrder(order.id);
+      const res = await deleteSalesOrder(order.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        setDeleting(false);
+        return;
+      }
       toast.success("Sales order deleted");
       router.push("/dashboard/sales/order");
     } catch (e: any) {
@@ -235,7 +240,11 @@ export function SalesOrderDetailClient({
     if (!confirm(`Recall ${order.soNo}? This will return it to draft.`)) return;
     setActioning("recall");
     try {
-      await recallSalesOrder(order.id);
+      const res = await recallSalesOrder(order.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Sales order recalled");
       router.refresh();
     } catch (e: any) {

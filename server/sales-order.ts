@@ -17,12 +17,14 @@ import {
   user,
   invoice,
   consignment,
+  consignHeader,
   member,
+  purchaseRequisition,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
 import { uniqueCpoNoFor } from "@/lib/customer-po/unique-no";
-import { eq, and, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
+import { eq, and, ne, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -1023,7 +1025,11 @@ async function applySalesOrderUpdate(
   return row;
 }
 
-export async function deleteSalesOrder(id: string): Promise<void> {
+// Problems come back as a readable message, not a thrown error (those are
+// hidden in production). Every check runs before anything is written: the
+// writes below aren't in a transaction, so a check failing halfway would
+// leave POs/Customer POs unlinked from an SO that still exists.
+export async function deleteSalesOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { orgId, userId } = await requireAccess("sales-order:delete");
 
   const [existing] = await db
@@ -1031,23 +1037,36 @@ export async function deleteSalesOrder(id: string): Promise<void> {
     .from(salesOrder)
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
-  if (!existing) throw new Error("Sales order not found");
-  if (existing.createdBy !== userId) throw new Error("Only the creator can delete this sales order");
+  if (!existing) return { ok: false, error: "Sales order not found" };
+  if (existing.createdBy !== userId) return { ok: false, error: "Only the creator can delete this sales order" };
   if (existing.status === "submitted" || existing.status === "confirmed" || existing.status === "fulfilled")
-    throw new Error("Only draft or cancelled orders can be deleted");
+    return { ok: false, error: "Only draft or cancelled orders can be deleted" };
+
+  const downstream = await activeSalesOrderDownstream(orgId, id);
+  if (downstream.length > 0) {
+    return {
+      ok: false,
+      error: `Can't delete ${existing.soNo} — documents raised from it are still active: ${downstream.join(", ")}. Cancel those first, or cancel this order instead of deleting it.`,
+    };
+  }
+
+  // References nothing below unlinks — the database refuses to delete an SO
+  // any of these still point at, even when the referencing record is
+  // cancelled. Cancel the SO instead so its trail stays intact.
+  const [hasPr] = await db.select({ id: purchaseRequisition.id }).from(purchaseRequisition).where(eq(purchaseRequisition.salesOrderId, id)).limit(1);
+  if (hasPr) return { ok: false, error: `Can't delete ${existing.soNo} — a purchase requisition was raised from it. Cancel the order instead.` };
+
+  const [hasConsignment] = await db.select({ id: consignment.id }).from(consignment).where(eq(consignment.soId, id)).limit(1);
+  const [hasConsignHeader] = await db.select({ id: consignHeader.id }).from(consignHeader).where(eq(consignHeader.soId, id)).limit(1);
+  if (hasConsignment || hasConsignHeader) return { ok: false, error: `Can't delete ${existing.soNo} — it has consignment records. Cancel the order instead.` };
+
+  const [hasRevision] = await db.select({ soNo: salesOrder.soNo }).from(salesOrder).where(eq(salesOrder.originalSoId, id)).limit(1);
+  if (hasRevision) return { ok: false, error: `Can't delete ${existing.soNo} — ${hasRevision.soNo} is a revision of it. Cancel the order instead.` };
 
   // Delete R2 supplier quotation file if present
   if (existing.supplierQuotationKey) {
     await deleteSupplierQuotationFile(existing.supplierQuotationKey);
   }
-
-  // Block deletion if consignments exist (soId is NOT NULL, cannot unlink)
-  const [hasConsignment] = await db
-    .select({ id: consignment.id })
-    .from(consignment)
-    .where(eq(consignment.soId, id))
-    .limit(1);
-  if (hasConsignment) throw new Error("Cannot delete: this order has consignment records");
 
   // Unlink any POs that reference this SO (set salesOrderId → null)
   await db
@@ -1096,6 +1115,7 @@ export async function deleteSalesOrder(id: string): Promise<void> {
   }
 
   revalidatePath("/dashboard/sales/order");
+  return { ok: true };
 }
 
 export async function updateSalesOrderStatus(id: string, status: string): Promise<void> {
@@ -1334,7 +1354,49 @@ export async function rejectSalesOrder(id: string): Promise<void> {
 
 // ── Recall (confirmed → draft) ────────────────────────────────────────────
 
-export async function recallSalesOrder(id: string): Promise<void> {
+// Documents raised from this SO that are still live. Recalling the SO while
+// any exist would leave them (and, through an intercompany PO, a sibling
+// org's auto-created SO) running against an order that's back in draft —
+// nothing propagates a recall or a later edit down the chain.
+async function activeSalesOrderDownstream(orgId: string, soId: string): Promise<string[]> {
+  const prs = await db
+    .select({ id: purchaseRequisition.id, prNo: purchaseRequisition.prNo, status: purchaseRequisition.status })
+    .from(purchaseRequisition)
+    .where(and(eq(purchaseRequisition.salesOrderId, soId), eq(purchaseRequisition.organizationId, orgId)));
+  const prIds = prs.map((p) => p.id);
+
+  const pos = await db
+    .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo })
+    .from(purchaseOrder)
+    .where(and(
+      eq(purchaseOrder.organizationId, orgId),
+      ne(purchaseOrder.status, "cancelled"),
+      prIds.length > 0
+        ? or(eq(purchaseOrder.salesOrderId, soId), inArray(purchaseOrder.purchaseRequisitionId, prIds))
+        : eq(purchaseOrder.salesOrderId, soId),
+    ));
+
+  const dos = await db
+    .select({ doNo: deliveryOrder.doNo })
+    .from(deliveryOrder)
+    .where(and(eq(deliveryOrder.salesOrderId, soId), eq(deliveryOrder.organizationId, orgId)));
+
+  const invs = await db
+    .select({ invoiceNo: invoice.invoiceNo })
+    .from(invoice)
+    .where(and(eq(invoice.salesOrderId, soId), eq(invoice.organizationId, orgId), ne(invoice.status, "cancelled")));
+
+  return [
+    ...prs.filter((p) => p.status !== "cancelled").map((p) => `PR ${p.prNo}`),
+    ...pos.map((p) => `PO ${p.poNo ?? p.prNo ?? "(unnumbered)"}`),
+    ...dos.map((d) => `DO ${d.doNo}`),
+    ...invs.map((i) => `Invoice ${i.invoiceNo}`),
+  ];
+}
+
+// Problems come back as a readable message, not a thrown error (those are
+// hidden in production).
+export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { orgId, userId, session } = await requireAccess("sales-order:approve");
 
   const [so] = await db
@@ -1342,9 +1404,17 @@ export async function recallSalesOrder(id: string): Promise<void> {
     .from(salesOrder)
     .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
 
-  if (!so) throw new Error("Sales order not found");
-  if (so.status !== "confirmed") throw new Error("Only confirmed orders can be recalled");
+  if (!so) return { ok: false, error: "Sales order not found" };
+  if (so.status !== "confirmed") return { ok: false, error: "Only confirmed orders can be recalled" };
   await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "recall");
+
+  const downstream = await activeSalesOrderDownstream(orgId, id);
+  if (downstream.length > 0) {
+    return {
+      ok: false,
+      error: `Can't recall ${so.soNo} — documents raised from it are still active: ${downstream.join(", ")}. Cancel or recall those first.`,
+    };
+  }
 
   await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null, stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null }).where(eq(salesOrder.id, id));
 
@@ -1389,6 +1459,8 @@ export async function recallSalesOrder(id: string): Promise<void> {
     grandTotal: so.grandTotal ?? undefined,
     actorName,
   }).catch(console.error);
+
+  return { ok: true };
 }
 
 export async function toggleSoItemPrExcluded(itemId: string, excluded: boolean): Promise<void> {

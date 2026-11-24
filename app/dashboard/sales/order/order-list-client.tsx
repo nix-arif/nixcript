@@ -115,7 +115,11 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
     if (!confirm(`Delete ${soNo}? This cannot be undone.`)) return;
     setDeleting(id);
     try {
-      await deleteSalesOrder(id);
+      const res = await deleteSalesOrder(id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Sales order deleted");
       router.refresh();
     } catch (e: any) {

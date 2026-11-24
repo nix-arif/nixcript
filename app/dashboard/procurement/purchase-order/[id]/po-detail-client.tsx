@@ -885,7 +885,10 @@ export function PurchaseOrderDetailClient({
                 {can("purchase-order:approve") && (
                   <Button
                     size="sm" variant="outline" className="w-full gap-1.5 h-8 text-xs" disabled={!!actioning}
-                    onClick={() => act("recall", () => recallPurchaseOrder(order.id), "draft", "Purchase order recalled")}
+                    onClick={() => act("recall", async () => {
+                      const res = await recallPurchaseOrder(order.id);
+                      if (!res.ok) throw new Error(res.error);
+                    }, "draft", "Purchase order recalled")}
                   >
                     <RotateCcwIcon className="w-3.5 h-3.5" />
                     {actioning === "recall" ? "Recalling…" : "Recall PO"}

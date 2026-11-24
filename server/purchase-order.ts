@@ -1967,11 +1967,57 @@ export async function rejectPurchaseOrder(id: string): Promise<void> {
   }).catch(console.error);
 }
 
-export async function recallPurchaseOrder(id: string): Promise<void> {
+// Documents raised from this PO that are still live — including the Sales
+// Order auto-created in a sibling org by maybeCreateIntercompanySalesOrder,
+// which nothing updates or cancels when this PO is recalled.
+async function activePurchaseOrderDownstream(orgId: string, poId: string): Promise<string[]> {
+  const siblingSos = await db
+    .select({ soNo: salesOrder.soNo, orgName: organization.name })
+    .from(salesOrder)
+    .leftJoin(organization, eq(organization.id, salesOrder.organizationId))
+    .where(and(eq(salesOrder.sourcePurchaseOrderId, poId), ne(salesOrder.status, "cancelled")));
+
+  const grs = await db
+    .select({ grNo: goodsReceipt.grNo })
+    .from(goodsReceipt)
+    .where(and(eq(goodsReceipt.purchaseOrderId, poId), eq(goodsReceipt.organizationId, orgId), ne(goodsReceipt.status, "recalled")));
+
+  const pls = await db
+    .selectDistinct({ packingListNo: packingList.packingListNo })
+    .from(packingListItem)
+    .innerJoin(packingList, eq(packingList.id, packingListItem.packingListId))
+    .where(and(eq(packingListItem.purchaseOrderId, poId), eq(packingList.organizationId, orgId), ne(packingList.status, "cancelled")));
+
+  const invs = await db
+    .select({ invoiceNo: invoice.invoiceNo })
+    .from(invoice)
+    .where(and(eq(invoice.purchaseOrderId, poId), eq(invoice.organizationId, orgId), ne(invoice.status, "cancelled")));
+
+  return [
+    ...siblingSos.map((s) => `SO ${s.soNo}${s.orgName ? ` in ${s.orgName}` : ""}`),
+    ...grs.map((g) => `GR ${g.grNo}`),
+    ...pls.map((p) => `Packing List ${p.packingListNo}`),
+    ...invs.map((i) => `Invoice ${i.invoiceNo}`),
+  ];
+}
+
+// Problems come back as a readable message, not a thrown error (those are
+// hidden in production).
+export async function recallPurchaseOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { orgId, userId, session } = await requireAccess("purchase-order:approve");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status !== "confirmed") throw new Error("Only confirmed purchase orders can be recalled");
+  if (po.status !== "confirmed") return { ok: false, error: "Only confirmed purchase orders can be recalled" };
   await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "recall");
+
+  const downstream = await activePurchaseOrderDownstream(orgId, id);
+  if (downstream.length > 0) {
+    const docRef = po.poNo ?? po.prNo ?? id;
+    return {
+      ok: false,
+      error: `Can't recall ${docRef} — documents raised from it are still active: ${downstream.join(", ")}. Cancel or recall those first.`,
+    };
+  }
+
   await db.update(purchaseOrder).set({ status: "draft" }).where(eq(purchaseOrder.id, id));
 
   revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
@@ -1986,6 +2032,8 @@ export async function recallPurchaseOrder(id: string): Promise<void> {
     body: `Purchase order ${docRef} has been recalled by ${session.user.name}.`,
     link: `/dashboard/procurement/purchase-order/${po.id}`,
   }).catch(console.error);
+
+  return { ok: true };
 }
 
 export async function reconfirmPurchaseOrder(id: string): Promise<void> {
