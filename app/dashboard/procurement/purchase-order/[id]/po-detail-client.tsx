@@ -264,7 +264,11 @@ export function PurchaseOrderDetailClient({
   canEditPoNumber,
   recallBlockers = [],
   deleteBlocker = null,
+  cancelBlocker = null,
 }: {
+  // Why Cancel isn't offered (its own live documents, or a sibling SO already
+  // acted on) — a sibling SO nobody has touched is cancelled with the PO instead.
+  cancelBlocker?: string | null;
   // Active documents raised from this PO — Recall is hidden while any exist.
   recallBlockers?: string[];
   // Why this PO can't be deleted (linked documents) — Delete is hidden when set.
@@ -907,18 +911,24 @@ export function PurchaseOrderDetailClient({
                 )}
                 {can("purchase-order:approve") && recallBlockers.length > 0 && (
                   <p className="text-[11px] text-muted-foreground leading-snug">
-                    Can&apos;t recall or cancel — active documents raised from this PO: {recallBlockers.join(", ")}.
+                    Can&apos;t recall — active documents raised from this PO: {recallBlockers.join(", ")}.
                   </p>
                 )}
-                {can("purchase-order:approve") && recallBlockers.length === 0 && (
+                {can("purchase-order:approve") && cancelBlocker && (
+                  <p className="text-[11px] text-muted-foreground leading-snug">{cancelBlocker}</p>
+                )}
+                {can("purchase-order:approve") && !cancelBlocker && (
                   <Button
                     size="sm" variant="outline"
                     className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30"
                     disabled={!!actioning}
-                    onClick={() => act("cancel", async () => {
-                      const res = await cancelPurchaseOrder(order.id);
-                      if (!res.ok) throw new Error(res.error);
-                    }, "cancelled", "Purchase order cancelled")}
+                    onClick={() => {
+                      if (!confirm(`Cancel ${order.poNo ?? order.prNo ?? "this PO"}? If it was issued to one of your other companies, the sales order they got from it is cancelled too.`)) return;
+                      act("cancel", async () => {
+                        const res = await cancelPurchaseOrder(order.id);
+                        if (!res.ok) throw new Error(res.error);
+                      }, "cancelled", "Purchase order cancelled");
+                    }}
                   >
                     <XIcon className="w-3.5 h-3.5" />
                     {actioning === "cancel" ? "Cancelling…" : "Cancel PO"}

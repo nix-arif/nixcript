@@ -10,6 +10,7 @@ import {
   approveSalesOrder,
   rejectSalesOrder,
   recallSalesOrder,
+  cancelSalesOrder,
   toggleSoItemApprovalRejected,
   type SalesOrderWithItems,
 } from "@/server/sales-order";
@@ -76,7 +77,11 @@ export function SalesOrderDetailClient({
   businessType = "trading",
   recallBlockers = [],
   deleteBlocker = null,
+  cancelBlocker = null,
 }: {
+  // Why Cancel isn't offered (live documents raised from it, or — for an
+  // intercompany SO — the buyer's PO still live). Hidden when set.
+  cancelBlocker?: string | null;
   order: SalesOrderWithItems;
   linkedQuotations?: QuotationBasic[];
   linkedDos: { id: string; doNo: string; customerPoId: string | null; customerPoNo: string | null; status: string }[];
@@ -103,7 +108,7 @@ export function SalesOrderDetailClient({
   const showSourcing = businessType !== "trading";
   const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState(order.status ?? "draft");
-  const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | null>(null);
+  const [actioning, setActioning] = useState<"submit" | "approve" | "reject" | "recall" | "cancel" | null>(null);
   const [rechecking, setRechecking] = useState(false);
   const [insight, setInsight] = useState<StockCheckResult | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
@@ -255,6 +260,23 @@ export function SalesOrderDetailClient({
       router.refresh();
     } catch (e: any) {
       toast.error(e.message);
+    } finally {
+      setActioning(null);
+    }
+  }
+
+  async function handleCancel() {
+    if (!confirm(`Cancel ${order.soNo}? It stays on record as cancelled and can't be reopened.`)) return;
+    setActioning("cancel");
+    try {
+      const res = await cancelSalesOrder(order.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      setStatus("cancelled");
+      toast.success("Sales order cancelled");
+      router.refresh();
     } finally {
       setActioning(null);
     }
@@ -414,7 +436,14 @@ export function SalesOrderDetailClient({
                 )}
               </>
             ) : (
-              <StatusBadge status={status} />
+              <>
+                <StatusBadge status={status} />
+                {status !== "fulfilled" && can("sales-order:approve") && !cancelBlocker && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleCancel} disabled={actioning !== null}>
+                    <XIcon className="w-3.5 h-3.5" /> {actioning === "cancel" ? "Cancelling…" : "Cancel"}
+                  </Button>
+                )}
+              </>
             )}
           </div>
         }

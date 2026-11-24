@@ -1460,6 +1460,168 @@ export async function getSalesOrderRecallBlockers(soId: string): Promise<string[
   return activeSalesOrderDownstream(orgId, soId);
 }
 
+// ── Cancel ────────────────────────────────────────────────────────────────
+
+// Why this SO can't be cancelled, or null: live documents raised from it, or
+// — for an SO auto-created from a sibling org's PO — that PO still being
+// live. An intercompany order is cancelled from the buyer's side: cancelling
+// their PO cancels this SO too (cancelIntercompanySalesOrdersForPo).
+async function salesOrderCancelBlocker(orgId: string, so: { id: string; soNo: string; sourcePurchaseOrderId: string | null }): Promise<string | null> {
+  const live = await activeSalesOrderDownstream(orgId, so.id);
+  if (live.length > 0) return `Can't cancel ${so.soNo} — documents raised from it are still active: ${live.join(", ")}. Cancel those first.`;
+  if (so.sourcePurchaseOrderId) {
+    const [src] = await db
+      .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, status: purchaseOrder.status, orgName: organization.name })
+      .from(purchaseOrder)
+      .leftJoin(organization, eq(organization.id, purchaseOrder.organizationId))
+      .where(eq(purchaseOrder.id, so.sourcePurchaseOrderId));
+    if (src && src.status !== "cancelled") {
+      return `Can't cancel ${so.soNo} — it came from ${src.orgName ?? "a sibling organization"}'s PO ${src.poNo ?? src.prNo ?? ""}, which is still ${src.status}. Ask them to cancel that PO; this order is cancelled with it.`;
+    }
+  }
+  return null;
+}
+
+// Read-only, for the SO detail page: hides Cancel when this is set.
+export async function getSalesOrderCancelBlocker(soId: string): Promise<string | null> {
+  const { orgId } = await requireAccess("sales-order:read");
+  const [so] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, sourcePurchaseOrderId: salesOrder.sourcePurchaseOrderId })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  return so ? salesOrderCancelBlocker(orgId, so) : null;
+}
+
+// Releases the SO's stock reservation, if it holds one.
+async function releaseSoReservation(orgId: string, soId: string, reservationStatus: string | null): Promise<void> {
+  if (reservationStatus !== "reserved") return;
+  const soItems = await db.select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty }).from(salesOrderItem).where(eq(salesOrderItem.salesOrderId, soId));
+  for (const i of soItems) {
+    if (!i.productId) continue;
+    await adjustReservation({ orgId, productId: i.productId, warehouseLabel: "Default", delta: -parseFloat(i.qty ?? "1") });
+  }
+}
+
+// Cancels an SO (any status but fulfilled/cancelled). Kept on record, not
+// deleted. Its Customer PO is unlinked so a new SO can be raised from it —
+// except an intercompany CPO, which is cancelled with the SO (it only exists
+// because of the sibling's PO). Problems come back as a readable message.
+export async function cancelSalesOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { orgId } = await requireAccess("sales-order:approve");
+  const [so] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, sourcePurchaseOrderId: salesOrder.sourcePurchaseOrderId, stockReservationStatus: salesOrder.stockReservationStatus })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+  if (!so) return { ok: false, error: "Sales order not found" };
+  if (so.status === "fulfilled" || so.status === "cancelled") return { ok: false, error: `${so.soNo} is already ${so.status}` };
+
+  const blocker = await salesOrderCancelBlocker(orgId, so);
+  if (blocker) return { ok: false, error: blocker };
+
+  await applyCancelSalesOrder(orgId, so);
+  revalidatePath(`/dashboard/sales/order/${id}`);
+  revalidatePath("/dashboard/sales/order");
+  revalidatePath("/dashboard/sales/customer-po");
+  return { ok: true };
+}
+
+async function applyCancelSalesOrder(orgId: string, so: { id: string; sourcePurchaseOrderId: string | null; stockReservationStatus: string | null }): Promise<void> {
+  await db.update(salesOrder).set({ status: "cancelled", stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null }).where(eq(salesOrder.id, so.id));
+  await releaseSoReservation(orgId, so.id, so.stockReservationStatus);
+
+  const cpos = await db
+    .select({ id: customerPurchaseOrder.id })
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.organizationId, orgId), eq(customerPurchaseOrder.salesOrderId, so.id)));
+  if (so.sourcePurchaseOrderId) {
+    // Intercompany: the auto-created CPO goes with it — matched by link, or
+    // by being the CPO the SO was created from (older ones were never linked back).
+    const [own] = await db.select({ customerPoId: salesOrder.customerPoId }).from(salesOrder).where(eq(salesOrder.id, so.id));
+    const ids = [...new Set([...cpos.map((c) => c.id), ...(own?.customerPoId ? [own.customerPoId] : [])])];
+    if (ids.length > 0) {
+      await db.update(customerPurchaseOrder).set({ status: "cancelled" })
+        .where(and(eq(customerPurchaseOrder.organizationId, orgId), inArray(customerPurchaseOrder.id, ids)));
+    }
+  } else if (cpos.length > 0) {
+    await db.update(customerPurchaseOrder).set({ salesOrderId: null, salesOrderNo: null })
+      .where(and(eq(customerPurchaseOrder.organizationId, orgId), inArray(customerPurchaseOrder.id, cpos.map((c) => c.id))));
+  }
+}
+
+// For cancelPurchaseOrder: what the sibling orgs' SOs auto-created from this
+// PO would block. An SO the sibling hasn't acted on (nothing raised from it)
+// can be cancelled along with the PO; one they have, can't — a person there
+// has to decide. Read-only. Scoped like maybeCreateIntercompanySalesOrder:
+// the PO must be in the caller's active org, the SOs in orgs the same owner holds.
+export async function intercompanySoCancelBlockers(poId: string): Promise<string[]> {
+  const { orgId, userId } = await requireAccess("purchase-order:read");
+  const [po] = await db.select({ organizationId: purchaseOrder.organizationId }).from(purchaseOrder).where(eq(purchaseOrder.id, poId));
+  if (!po || po.organizationId !== orgId) return [];
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+
+  const sos = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, organizationId: salesOrder.organizationId, orgName: organization.name })
+    .from(salesOrder)
+    .leftJoin(organization, eq(organization.id, salesOrder.organizationId))
+    .where(and(eq(salesOrder.sourcePurchaseOrderId, poId), ne(salesOrder.status, "cancelled")));
+
+  const out: string[] = [];
+  for (const so of sos) {
+    const where = so.orgName ?? "the sibling organization";
+    if (!ownerOrgIds.includes(so.organizationId)) { out.push(`SO ${so.soNo} in ${where}`); continue; }
+    if (so.status === "fulfilled") { out.push(`SO ${so.soNo} in ${where} (already fulfilled)`); continue; }
+    const live = await activeSalesOrderDownstream(so.organizationId, so.id);
+    if (live.length > 0) out.push(`SO ${so.soNo} in ${where} (${live.join(", ")})`);
+  }
+  return out;
+}
+
+// Called right after cancelPurchaseOrder cancels a PO: cancels the SO (and
+// its auto-created CPO) each sibling org got from it, and tells that org's SO
+// approvers. Takes only a poId and re-derives everything — this is a public
+// action like any export here. Never throws: the PO is already cancelled, and
+// the trail flags any SO left open.
+export async function cancelIntercompanySalesOrdersForPo(poId: string): Promise<void> {
+  try {
+    const { orgId, userId } = await requireAccess("purchase-order:update");
+    const [po] = await db
+      .select({ organizationId: purchaseOrder.organizationId, status: purchaseOrder.status, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo })
+      .from(purchaseOrder)
+      .where(eq(purchaseOrder.id, poId));
+    if (!po || po.organizationId !== orgId || po.status !== "cancelled") return;
+    const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+    const [buyer] = await db.select({ name: organization.name }).from(organization).where(eq(organization.id, orgId));
+
+    const sos = await db
+      .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, organizationId: salesOrder.organizationId, sourcePurchaseOrderId: salesOrder.sourcePurchaseOrderId, stockReservationStatus: salesOrder.stockReservationStatus })
+      .from(salesOrder)
+      .where(and(eq(salesOrder.sourcePurchaseOrderId, poId), ne(salesOrder.status, "cancelled"), ne(salesOrder.status, "fulfilled")));
+
+    for (const so of sos) {
+      if (!ownerOrgIds.includes(so.organizationId)) continue;
+      if ((await activeSalesOrderDownstream(so.organizationId, so.id)).length > 0) continue; // re-check: acted on since
+      await applyCancelSalesOrder(so.organizationId, so);
+
+      const poRef = po.poNo ?? po.prNo ?? poId;
+      const approvers = await getSoApprovers(so.organizationId).catch(() => [] as string[]);
+      for (const uid of approvers) {
+        await createNotification({
+          organizationId: so.organizationId,
+          userId: uid,
+          type: "so:cancelled",
+          title: `SO ${so.soNo} cancelled`,
+          body: `${buyer?.name ?? "A sibling organization"} cancelled PO ${poRef}, so sales order ${so.soNo} (raised from it) was cancelled too.`,
+          link: `/dashboard/sales/order/${so.id}`,
+        }).catch(console.error);
+      }
+    }
+    revalidatePath("/dashboard/sales/order");
+    revalidatePath("/dashboard/sales/customer-po");
+  } catch (e) {
+    console.error("cancelIntercompanySalesOrdersForPo failed:", e);
+  }
+}
+
 // Problems come back as a readable message, not a thrown error (those are
 // hidden in production).
 export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {

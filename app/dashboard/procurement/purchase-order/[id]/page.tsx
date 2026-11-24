@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getPurchaseOrderDetail, getPurchaseOrderRecallBlockers, getPurchaseOrderDeleteBlocker } from "@/server/purchase-order";
+import { getPurchaseOrderDetail, getPurchaseOrderRecallBlockers, getPurchaseOrderDeleteBlocker, getPurchaseOrderCancelBlocker } from "@/server/purchase-order";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { getOrganizationProfile } from "@/server/organization-profile";
 import { notFound } from "next/navigation";
@@ -18,6 +18,7 @@ export default async function PurchaseOrderDetailPage({ params }: { params: Prom
   if (!order) notFound();
 
   const recallBlockers = order.status === "confirmed" ? await getPurchaseOrderRecallBlockers(id).catch(() => []) : [];
+  const cancelBlocker = order.status === "confirmed" ? await getPurchaseOrderCancelBlocker(id).catch(() => null) : null;
   const deleteBlocker = !order.approvedAt && (order.status === "draft" || order.status === "cancelled")
     ? await getPurchaseOrderDeleteBlocker(id).catch(() => null)
     : null;
@@ -29,6 +30,7 @@ export default async function PurchaseOrderDetailPage({ params }: { params: Prom
       currentUserId={session.user.id}
       businessType={profile?.businessType ?? "trading"}
       recallBlockers={recallBlockers}
+      cancelBlocker={cancelBlocker}
       deleteBlocker={deleteBlocker}
     />
   );

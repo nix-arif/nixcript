@@ -43,7 +43,7 @@ import { createApprovedMovement } from "@/lib/inventory/create-movement";
 import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 import { createNotification, getPoApprovers } from "@/server/notifications";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
-import { maybeCreateIntercompanySalesOrder } from "@/server/sales-order";
+import { maybeCreateIntercompanySalesOrder, intercompanySoCancelBlockers, cancelIntercompanySalesOrdersForPo } from "@/server/sales-order";
 import { nextIntercompanyPoNo } from "@/lib/intercompany/icpo-number";
 import { assertSupplierAllowed } from "@/server/supplier-restrictions";
 import { routeRestrictedSupplier, joinNotes } from "@/lib/org/supplier-routing";
@@ -1977,12 +1977,16 @@ export async function rejectPurchaseOrder(id: string): Promise<void> {
 // Documents raised from this PO that are still live — including the Sales
 // Order auto-created in a sibling org by maybeCreateIntercompanySalesOrder,
 // which nothing updates or cancels when this PO is recalled.
-async function activePurchaseOrderDownstream(orgId: string, poId: string): Promise<string[]> {
-  const siblingSos = await db
-    .select({ soNo: salesOrder.soNo, orgName: organization.name })
-    .from(salesOrder)
-    .leftJoin(organization, eq(organization.id, salesOrder.organizationId))
-    .where(and(eq(salesOrder.sourcePurchaseOrderId, poId), ne(salesOrder.status, "cancelled")));
+// includeSibling: false leaves the sibling SOs out — cancel handles those
+// itself (cancelling them along with the PO where it safely can).
+async function activePurchaseOrderDownstream(orgId: string, poId: string, includeSibling = true): Promise<string[]> {
+  const siblingSos = includeSibling
+    ? await db
+        .select({ soNo: salesOrder.soNo, orgName: organization.name })
+        .from(salesOrder)
+        .leftJoin(organization, eq(organization.id, salesOrder.organizationId))
+        .where(and(eq(salesOrder.sourcePurchaseOrderId, poId), ne(salesOrder.status, "cancelled")))
+    : [];
 
   const grs = await db
     .select({ grNo: goodsReceipt.grNo })
@@ -2118,10 +2122,28 @@ export async function fulfillPurchaseOrder(id: string, warehouseLabel = "Default
   );
 }
 
+// Why this PO can't be cancelled, or null: its own live goods receipts,
+// packing lists or invoices, or a sibling org's SO from it that the sibling
+// has already acted on. A sibling SO nobody has acted on doesn't block — it's
+// cancelled along with the PO.
+async function purchaseOrderCancelBlocker(orgId: string, poId: string, docRef: string): Promise<string | null> {
+  const own = await activePurchaseOrderDownstream(orgId, poId, false);
+  const sibling = await intercompanySoCancelBlockers(poId);
+  const all = [...sibling, ...own];
+  return all.length > 0 ? `Can't cancel ${docRef} — documents raised from it are still active: ${all.join(", ")}. Cancel or recall those first.` : null;
+}
+
+// Read-only, for the PO detail page: hides Cancel when this is set.
+export async function getPurchaseOrderCancelBlocker(poId: string): Promise<string | null> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  const [po] = await db.select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo }).from(purchaseOrder).where(and(eq(purchaseOrder.id, poId), eq(purchaseOrder.organizationId, orgId)));
+  return po ? purchaseOrderCancelBlocker(orgId, poId, po.poNo ?? po.prNo ?? poId) : null;
+}
+
 // Problems come back as a readable message, not a thrown error (those are
-// hidden in production). Blocked by the same live downstream documents as
-// recall — notably the sibling org's auto-created SO, which a cancel here
-// never reaches. Once cancelled, the PR items this PO covered are released
+// hidden in production). Blocked by purchaseOrderCancelBlocker; a sibling
+// org's SO nobody there has acted on is cancelled with the PO (and that org
+// notified). Once cancelled, the PR items this PO covered are released
 // and the PR's status recomputed (ordered → partially_ordered / approved),
 // so a replacement PO can be raised from it or it can be cancelled.
 export async function cancelPurchaseOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -2129,16 +2151,11 @@ export async function cancelPurchaseOrder(id: string): Promise<{ ok: true } | { 
   const po = await getPoForWorkflow(id, orgId);
   if (po.status === "fulfilled" || po.status === "cancelled") return { ok: false, error: "Cannot cancel a fulfilled or already cancelled purchase order" };
 
-  const docRef = po.poNo ?? po.prNo ?? id;
-  const downstream = await activePurchaseOrderDownstream(orgId, id);
-  if (downstream.length > 0) {
-    return {
-      ok: false,
-      error: `Can't cancel ${docRef} — documents raised from it are still active: ${downstream.join(", ")}. Cancel or recall those first.`,
-    };
-  }
+  const blocker = await purchaseOrderCancelBlocker(orgId, id, po.poNo ?? po.prNo ?? id);
+  if (blocker) return { ok: false, error: blocker };
 
   await db.update(purchaseOrder).set({ status: "cancelled" }).where(eq(purchaseOrder.id, id));
+  await cancelIntercompanySalesOrdersForPo(id);
 
   // Release the requisition items this PO covered, then recompute each
   // affected PR's status the same way PO creation sets it.
