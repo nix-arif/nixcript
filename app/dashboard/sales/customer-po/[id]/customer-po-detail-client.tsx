@@ -54,7 +54,7 @@ export function CustomerPoDetailClient({
   const showEdit = editHref !== undefined || can("customer-po:update");
   const resolvedEditHref = editHref ?? `/dashboard/sales/customer-po/${cpo.id}/edit`;
 
-  const { prs, spoList, soState, prState, spoState, doState, invState, pmt } = trailStates(data);
+  const { prOpenCount, activeSpoList, soState, prState, spoState, doState, invState, pmt } = trailStates(data);
   const resolvedTrailHref = trailHref ?? `/dashboard/sales/customer-po/${cpo.id}/trail`;
 
   const cpoStatusCfg = CPO_STATUS[cpo.status] ?? CPO_STATUS.received;
@@ -156,9 +156,9 @@ export function CustomerPoDetailClient({
             </div>
             <ProgressRow icon={PackageIcon} label="Sales Order" state={soState} note={so?.soNo} />
             <ProgressRow icon={FileTextIcon} label="Purch. Req." state={prState}
-              note={prs.length > 0 ? `${prs.length} pending` : undefined} />
+              note={prOpenCount > 0 ? `${prOpenCount} open` : undefined} />
             <ProgressRow icon={PackageIcon} label="Supplier PO" state={spoState}
-              note={spoList.length > 0 ? `${spoList.length} PO${spoList.length > 1 ? "s" : ""}` : undefined} />
+              note={activeSpoList.length > 0 ? `${activeSpoList.length} PO${activeSpoList.length > 1 ? "s" : ""}` : undefined} />
             <ProgressRow icon={TruckIcon} label="Delivery" state={doState}
               note={dos.length > 0 ? `${dos.filter((d) => d.status === "delivered").length}/${dos.length} delivered` : undefined} />
             <ProgressRow icon={ReceiptIcon} label="Invoice" state={invState}

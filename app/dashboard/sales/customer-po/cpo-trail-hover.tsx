@@ -66,6 +66,8 @@ function buildTrail(t: CustomerPoTrackingData): Event[] {
   });
   if (t.so)
     ev.push({ at: new Date(t.so.createdAt), title: `Sales order ${t.so.soNo}`, detail: `${word(t.so.status)}${t.so.grandTotal ? ` · ${money(t.so.grandTotal)}` : ""}`, tone: "violet", icon: <ShoppingCartIcon className={icon} /> });
+  for (const r of t.requisitions)
+    ev.push({ at: new Date(r.createdAt), title: `Purchase requisition ${r.prNo}`, detail: word(r.status), tone: r.status === "cancelled" ? "red" : "slate", icon: <FileTextIcon className={icon} /> });
   for (const p of t.internalPos)
     ev.push({ at: new Date(p.createdAt), title: `Supplier PO ${p.poNo ?? p.prNo ?? ""}`.trim(), detail: word(p.status), tone: "amber", icon: <PackageIcon className={icon} /> });
   for (const d of t.dos)

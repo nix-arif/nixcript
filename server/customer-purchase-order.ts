@@ -638,6 +638,8 @@ export interface CustomerPoTrackingData {
     deliveryDate: Date | null;
   } | null;
   internalPos: { id: string; prNo: string | null; poNo: string | null; status: string; createdAt: Date; grandTotal: string | null; supplierId: string | null }[];
+  // Purchase requisitions raised from the SO (draft | submitted | approved | ordered | cancelled).
+  requisitions: { id: string; prNo: string; status: string; createdAt: Date }[];
   dos: { id: string; doNo: string; status: string; createdAt: Date; deliveryDate: Date | null }[];
   invoices: {
     id: string; invoiceNo: string; status: string; createdAt: Date;
@@ -797,6 +799,26 @@ async function fetchCpoTrackingData(cpo: CustomerPo, viewer: { userId: string; o
 
   const so = soRows[0] ?? null;
 
+  // Requisitions raised from the SO (the purchase_requisition table — PRs
+  // converted from an SO live here, not as draft rows of purchase_order).
+  const requisitionRows = so
+    ? await db.select({
+        id: purchaseRequisition.id, prNo: purchaseRequisition.prNo, status: purchaseRequisition.status,
+        createdAt: purchaseRequisition.createdAt,
+      }).from(purchaseRequisition)
+        .where(and(eq(purchaseRequisition.salesOrderId, so.id), eq(purchaseRequisition.organizationId, cpo.organizationId)))
+        .orderBy(asc(purchaseRequisition.createdAt))
+    : [];
+
+  // Supplier POs for this CPO however they're linked: directly to the CPO,
+  // to its SO, or to one of the SO's requisitions. Cancelled ones included —
+  // the trail shows them as cancelled rather than as "none issued".
+  const poLinks = [
+    ...(poLinkRows.length > 0 ? [inArray(purchaseOrder.id, poLinkRows.map((r) => r.purchaseOrderId))] : []),
+    ...(so ? [eq(purchaseOrder.salesOrderId, so.id)] : []),
+    ...(requisitionRows.length > 0 ? [inArray(purchaseOrder.purchaseRequisitionId, requisitionRows.map((r) => r.id))] : []),
+  ];
+
   const [dosRows, invoiceRows, internalPoRows] = await Promise.all([
     so
       ? db.select({
@@ -817,12 +839,12 @@ async function fetchCpoTrackingData(cpo: CustomerPo, viewer: { userId: string; o
           : eq(invoice.customerPoId, id),
       )
       .orderBy(asc(invoice.createdAt)),
-    poLinkRows.length > 0
+    poLinks.length > 0
       ? db.select({
           id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, status: purchaseOrder.status,
           createdAt: purchaseOrder.createdAt, grandTotal: purchaseOrder.grandTotal, supplierId: purchaseOrder.supplierId,
         }).from(purchaseOrder)
-          .where(inArray(purchaseOrder.id, poLinkRows.map((r) => r.purchaseOrderId)))
+          .where(and(eq(purchaseOrder.organizationId, cpo.organizationId), or(...poLinks)))
           .orderBy(asc(purchaseOrder.createdAt))
       : Promise.resolve([]),
   ]);
@@ -848,6 +870,7 @@ async function fetchCpoTrackingData(cpo: CustomerPo, viewer: { userId: string; o
     createdByName: userRows[0]?.name ?? null,
     so,
     internalPos: internalPoRows,
+    requisitions: requisitionRows,
     dos: dosRows,
     invoices: invoiceRows,
     intercompany,

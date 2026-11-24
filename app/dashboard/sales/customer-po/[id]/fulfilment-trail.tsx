@@ -50,6 +50,14 @@ const PO_STATUS: Record<string, { label: string; color: string }> = {
   received:     { label: "Received",     color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
 };
 
+const PR_STATUS: Record<string, { label: string; color: string }> = {
+  draft:     { label: "Draft",     color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
+  submitted: { label: "Submitted", color: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" },
+  approved:  { label: "Approved",  color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
+  ordered:   { label: "Ordered",   color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
+  cancelled: { label: "Cancelled", color: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
+};
+
 const DO_STATUS: Record<string, { label: string; color: string }> = {
   draft:     { label: "Draft",     color: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400" },
   delivered: { label: "Delivered", color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
@@ -181,17 +189,39 @@ function paymentState(invoices: Data["invoices"]): {
 
 // ── Step states (shared with the detail page's Progress summary) ───────────
 export function trailStates(data: Data) {
-  const { cpo, so, internalPos, dos, invoices } = data;
-  const prs     = internalPos.filter((p) => p.status === "draft" || p.status === "submitted");
-  const spoList = internalPos.filter((p) => p.status !== "draft" && p.status !== "submitted" && p.status !== "cancelled");
+  const { cpo, so, internalPos, requisitions, dos, invoices } = data;
+
+  // Requisitions: the purchase_requisition table (PRs raised from the SO),
+  // plus legacy ones kept as draft/submitted rows of purchase_order.
+  const prList: { id: string; no: string; status: string; createdAt: Date; href: string; cfg: { label: string; color: string } }[] = [
+    ...requisitions.map((r) => ({
+      id: r.id, no: r.prNo, status: r.status, createdAt: r.createdAt,
+      href: `/dashboard/procurement/requisition/${r.id}`,
+      cfg: PR_STATUS[r.status] ?? PR_STATUS.draft,
+    })),
+    ...internalPos
+      .filter((p) => p.status === "draft" || p.status === "submitted")
+      .map((p) => ({
+        id: p.id, no: p.prNo ?? p.poNo ?? p.id, status: p.status, createdAt: p.createdAt,
+        href: `/dashboard/procurement/purchase-order/${p.id}`,
+        cfg: PO_STATUS[p.status] ?? PO_STATUS.draft,
+      })),
+  ];
+  const prOpenCount = prList.filter((r) => r.status === "draft" || r.status === "submitted" || r.status === "approved").length;
+
+  // Supplier POs that were issued — cancelled ones included, shown as such.
+  const spoList = internalPos.filter((p) => p.status !== "draft" && p.status !== "submitted");
+  const activeSpoList = spoList.filter((p) => p.status !== "cancelled");
 
   const cpoState: StepState = cpo.status === "fulfilled" ? "done" : "active";
   const soState:  StepState = !so ? "pending" : so.status === "fulfilled" ? "done" : "active";
-  const prState:  StepState = internalPos.length === 0 ? "pending"
-    : spoList.length > 0 ? "done"
+  const prState:  StepState = prList.length === 0 && spoList.length === 0 ? "pending"
+    : activeSpoList.length > 0 || prList.some((r) => r.status === "ordered") ? "done"
+    : prList.length > 0 && prList.every((r) => r.status === "cancelled") ? "warn"
     : "active";
   const spoState: StepState = spoList.length === 0 ? "pending"
-    : spoList.every((p) => p.status === "fulfilled") ? "done"
+    : activeSpoList.length === 0 ? "warn"
+    : activeSpoList.every((p) => p.status === "fulfilled") ? "done"
     : "active";
   const doState:  StepState = dos.length === 0 ? "pending"
     : dos.every((d) => d.status === "delivered") ? "done"
@@ -202,7 +232,7 @@ export function trailStates(data: Data) {
     : invoices.some((i) => i.status === "overdue") ? "warn"
     : "active";
 
-  return { prs, spoList, cpoState, soState, prState, spoState, doState, invState, pmt };
+  return { prList, prOpenCount, spoList, activeSpoList, cpoState, soState, prState, spoState, doState, invState, pmt };
 }
 
 // ── Intercompany legs ──────────────────────────────────────────────────────
@@ -301,10 +331,10 @@ export function FulfilmentTrailClient({
   organizationName?: string;
 }) {
   const router = useRouter();
-  const { cpo, so, internalPos, dos, invoices } = data;
+  const { cpo, so, dos, invoices } = data;
   const snap = cpo.customerSnapshot as { name?: string; organizationName?: string } | null;
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
-  const { prs, spoList, cpoState, soState, prState, spoState, doState, invState, pmt } = trailStates(data);
+  const { prList, spoList, activeSpoList, cpoState, soState, prState, spoState, doState, invState, pmt } = trailStates(data);
   const cpoStatusCfg = CPO_STATUS[cpo.status] ?? CPO_STATUS.received;
 
   return (
@@ -380,25 +410,20 @@ export function FulfilmentTrailClient({
 
           {/* Step 3 — Purchase Requisition */}
           <TrailStep state={prState} icon={FileTextIcon} label="Purchase Requisition">
-            {internalPos.length === 0 ? (
-              <PendingCard label="No purchase requisition raised yet" />
-            ) : prs.length === 0 ? (
-              <PendingCard label="All requisitions approved" />
+            {prList.length === 0 ? (
+              <PendingCard label={spoList.length > 0 ? "Supplier PO raised without a requisition" : "No purchase requisition raised yet"} />
             ) : (
               <div className="space-y-1.5">
-                {prs.map((po) => {
-                  const cfg = PO_STATUS[po.status] ?? PO_STATUS.draft;
-                  return (
-                    <DocCard
-                      key={po.id}
-                      docNo={po.prNo ?? po.poNo ?? po.id}
-                      statusLabel={cfg.label}
-                      statusColor={cfg.color}
-                      meta={fmtDate(po.createdAt)}
-                      onClick={() => router.push(`/dashboard/procurement/purchase-order/${po.id}`)}
-                    />
-                  );
-                })}
+                {prList.map((r) => (
+                  <DocCard
+                    key={r.id}
+                    docNo={r.no}
+                    statusLabel={r.cfg.label}
+                    statusColor={r.cfg.color}
+                    meta={fmtDate(r.createdAt)}
+                    onClick={() => router.push(r.href)}
+                  />
+                ))}
               </div>
             )}
           </TrailStep>
@@ -408,6 +433,10 @@ export function FulfilmentTrailClient({
             {spoList.length === 0 ? (
               <PendingCard label="No supplier PO issued yet" />
             ) : (
+              <>
+              {activeSpoList.length === 0 && (
+                <p className="text-[11px] text-red-600 dark:text-red-400 mb-1.5">Every supplier PO for this order is cancelled — none is live.</p>
+              )}
               <div className="space-y-1.5">
                 {spoList.map((po) => {
                   const cfg = PO_STATUS[po.status] ?? PO_STATUS.confirmed;
@@ -423,6 +452,7 @@ export function FulfilmentTrailClient({
                   );
                 })}
               </div>
+              </>
             )}
           </TrailStep>
 
