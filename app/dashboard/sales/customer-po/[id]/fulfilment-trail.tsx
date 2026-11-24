@@ -55,6 +55,7 @@ const PR_STATUS: Record<string, { label: string; color: string }> = {
   submitted: { label: "Submitted", color: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" },
   approved:  { label: "Approved",  color: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400" },
   ordered:   { label: "Ordered",   color: "bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400" },
+  partially_ordered: { label: "Partly ordered", color: "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400" },
   cancelled: { label: "Cancelled", color: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400" },
 };
 
@@ -207,7 +208,7 @@ export function trailStates(data: Data) {
         cfg: PO_STATUS[p.status] ?? PO_STATUS.draft,
       })),
   ];
-  const prOpenCount = prList.filter((r) => r.status === "draft" || r.status === "submitted" || r.status === "approved").length;
+  const prOpenCount = prList.filter((r) => ["draft", "submitted", "approved", "partially_ordered"].includes(r.status)).length;
 
   // Supplier POs that were issued — cancelled ones included, shown as such.
   const spoList = internalPos.filter((p) => p.status !== "draft" && p.status !== "submitted");

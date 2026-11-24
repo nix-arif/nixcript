@@ -14,7 +14,7 @@ import { db } from "@/db";
 import {
   consignEvent, consignHeader, consignLine, consignPairSetting, consignPriceItem, consignSettlement,
   consignPartner, consignPartnerPriceItem, purchaseOrderCounter,
-  customer, customerOrganization, invoice, invoiceItem, intercompanyPurchaseOrderCounter,
+  customer, customerOrganization, invoice, invoiceItem,
   organization, product, purchaseOrder, purchaseOrderItem, salesOrderItem, supplier, documentNumberingSetting, member,
   assetUnit,
 } from "@/db/schema";
@@ -23,6 +23,7 @@ import { nanoid } from "nanoid";
 import { LENDABLE_USES } from "@/lib/inventory/constants";
 import { nextFreeDocNo } from "@/lib/document-number-group";
 import { standaloneInvoiceNo } from "@/lib/invoice-number";
+import { nextIntercompanyPoNo } from "@/lib/intercompany/icpo-number";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import type { DocType } from "@/lib/document-numbering";
 
@@ -49,25 +50,6 @@ async function getNumberingConfig(orgId: string, docType: DocType) {
 // they never take a number an aligned DO invoice will need
 async function nextInvoiceNo(orgId: string): Promise<string> {
   return standaloneInvoiceNo(orgId);
-}
-
-async function nextIntercompanyPoNo(orgId: string): Promise<string> {
-  // A company with no intercompany-PO numbering set up follows its own PO
-  // numbering with doc code "ICPO" (e.g. POAF/26-0001 → ICPOAF/26-0001),
-  // instead of the org-slug fallback.
-  const [own] = await db.select({ id: documentNumberingSetting.id }).from(documentNumberingSetting)
-    .where(and(eq(documentNumberingSetting.organizationId, orgId), eq(documentNumberingSetting.documentType, "icpo"))).limit(1);
-  const cfg = own ? await getNumberingConfig(orgId, "icpo") : { ...(await getNumberingConfig(orgId, "po")), documentType: "icpo" as const, docCode: "ICPO" };
-  const year = new Date().getFullYear();
-  const [c] = await db.select().from(intercompanyPurchaseOrderCounter).where(eq(intercompanyPurchaseOrderCounter.organizationId, orgId)).limit(1);
-  const start = c && c.year === year ? c.lastNumber + 1 : 1;
-  const { seq, docNo } = await nextFreeDocNo(
-    { table: purchaseOrder, id: purchaseOrder.id, organizationId: purchaseOrder.organizationId, number: purchaseOrder.poNo },
-    orgId, start, (n) => buildDocumentNo(cfg, year, n),
-  );
-  if (c) await db.update(intercompanyPurchaseOrderCounter).set({ year, lastNumber: seq }).where(eq(intercompanyPurchaseOrderCounter.organizationId, orgId));
-  else await db.insert(intercompanyPurchaseOrderCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: seq });
-  return docNo;
 }
 
 async function nextPoNo(orgId: string): Promise<string> {

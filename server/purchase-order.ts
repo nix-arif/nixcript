@@ -5,7 +5,6 @@ import {
   purchaseOrder,
   purchaseOrderItem,
   purchaseOrderCounter,
-  intercompanyPurchaseOrderCounter,
   purchaseRequisitionCounter,
   invoice,
   deliveryOrder,
@@ -45,6 +44,7 @@ import { MOVEMENT_TYPE, REF_TYPE } from "@/lib/inventory/constants";
 import { createNotification, getPoApprovers } from "@/server/notifications";
 import { assertSelfActionAllowed } from "@/lib/approvals/guard";
 import { maybeCreateIntercompanySalesOrder } from "@/server/sales-order";
+import { nextIntercompanyPoNo } from "@/lib/intercompany/icpo-number";
 import { assertSupplierAllowed } from "@/server/supplier-restrictions";
 import { routeRestrictedSupplier, joinNotes } from "@/lib/org/supplier-routing";
 import { priceIntercompanyLines, intercompanyPricingNote, sumTotals, stripPricingNote } from "@/lib/intercompany/pricing";
@@ -189,34 +189,6 @@ async function generatePoNo(orgId: string): Promise<string> {
   return docNo;
 }
 
-// Own counter — see intercompanyPurchaseOrderCounter in db/schema.ts for why
-// this is never allowed to share a sequence with generatePoNo.
-async function generateIntercompanyPoNo(orgId: string): Promise<string> {
-  const cfg = await getNumberingConfig(orgId, "icpo");
-  const year = new Date().getFullYear();
-
-  const existing = await db
-    .select()
-    .from(intercompanyPurchaseOrderCounter)
-    .where(eq(intercompanyPurchaseOrderCounter.organizationId, orgId))
-    .limit(1);
-
-  let nextNo: number;
-
-  if (existing.length === 0) {
-    await db.insert(intercompanyPurchaseOrderCounter).values({ id: nanoid(), organizationId: orgId, year, lastNumber: 1 });
-    nextNo = 1;
-  } else {
-    const counter = existing[0];
-    nextNo = counter.year === year ? counter.lastNumber + 1 : 1;
-    await db
-      .update(intercompanyPurchaseOrderCounter)
-      .set({ year, lastNumber: nextNo })
-      .where(eq(intercompanyPurchaseOrderCounter.organizationId, orgId));
-  }
-
-  return buildDocumentNo(cfg, year, nextNo);
-}
 
 // Auto-raises a value-only intercompany PO when a Case DO invoice is tagged
 // with this org's own "Laser" category — the business rule (per discussion):
@@ -287,7 +259,7 @@ export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string)
     const share = Math.round(grandTotal * (pct / 100) * 100) / 100;
     if (share <= 0) return;
 
-    const poNo = await generateIntercompanyPoNo(inv.organizationId);
+    const poNo = await nextIntercompanyPoNo(inv.organizationId);
     const poId = nanoid();
     const now = new Date();
 
@@ -1919,7 +1891,7 @@ export async function updatePurchaseOrderNumber(id: string, poNo: string): Promi
 
 async function getPoForWorkflow(id: string, orgId: string) {
   const [po] = await db
-    .select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, status: purchaseOrder.status, createdBy: purchaseOrder.createdBy })
+    .select({ id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, status: purchaseOrder.status, createdBy: purchaseOrder.createdBy, purchaseRequisitionId: purchaseOrder.purchaseRequisitionId })
     .from(purchaseOrder)
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
   if (!po) throw new Error("Purchase order not found");
@@ -2146,9 +2118,57 @@ export async function fulfillPurchaseOrder(id: string, warehouseLabel = "Default
   );
 }
 
-export async function cancelPurchaseOrder(id: string): Promise<void> {
+// Problems come back as a readable message, not a thrown error (those are
+// hidden in production). Blocked by the same live downstream documents as
+// recall — notably the sibling org's auto-created SO, which a cancel here
+// never reaches. Once cancelled, the PR items this PO covered are released
+// and the PR's status recomputed (ordered → partially_ordered / approved),
+// so a replacement PO can be raised from it or it can be cancelled.
+export async function cancelPurchaseOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const { orgId } = await requireAccess("purchase-order:update");
   const po = await getPoForWorkflow(id, orgId);
-  if (po.status === "fulfilled" || po.status === "cancelled") throw new Error("Cannot cancel a fulfilled or already cancelled purchase order");
+  if (po.status === "fulfilled" || po.status === "cancelled") return { ok: false, error: "Cannot cancel a fulfilled or already cancelled purchase order" };
+
+  const docRef = po.poNo ?? po.prNo ?? id;
+  const downstream = await activePurchaseOrderDownstream(orgId, id);
+  if (downstream.length > 0) {
+    return {
+      ok: false,
+      error: `Can't cancel ${docRef} — documents raised from it are still active: ${downstream.join(", ")}. Cancel or recall those first.`,
+    };
+  }
+
   await db.update(purchaseOrder).set({ status: "cancelled" }).where(eq(purchaseOrder.id, id));
+
+  // Release the requisition items this PO covered, then recompute each
+  // affected PR's status the same way PO creation sets it.
+  const covered = await db
+    .select({ purchaseRequisitionId: purchaseRequisitionItem.purchaseRequisitionId })
+    .from(purchaseRequisitionItem)
+    .where(eq(purchaseRequisitionItem.purchaseOrderId, id));
+  const prIds = [...new Set([...covered.map((c) => c.purchaseRequisitionId), ...(po.purchaseRequisitionId ? [po.purchaseRequisitionId] : [])])];
+  if (covered.length > 0) {
+    await db.update(purchaseRequisitionItem).set({ purchaseOrderId: null, purchaseOrderNo: null }).where(eq(purchaseRequisitionItem.purchaseOrderId, id));
+  }
+  for (const prId of prIds) {
+    const [pr] = await db
+      .select({ status: purchaseRequisition.status })
+      .from(purchaseRequisition)
+      .where(and(eq(purchaseRequisition.id, prId), eq(purchaseRequisition.organizationId, orgId)));
+    if (!pr || (pr.status !== "ordered" && pr.status !== "partially_ordered")) continue;
+    const items = await db
+      .select({ purchaseOrderId: purchaseRequisitionItem.purchaseOrderId })
+      .from(purchaseRequisitionItem)
+      .where(eq(purchaseRequisitionItem.purchaseRequisitionId, prId));
+    const allLinked = items.length > 0 && items.every((i) => !!i.purchaseOrderId);
+    const anyLinked = items.some((i) => !!i.purchaseOrderId);
+    const next = allLinked ? "ordered" : anyLinked ? "partially_ordered" : "approved";
+    if (next !== pr.status) await db.update(purchaseRequisition).set({ status: next }).where(eq(purchaseRequisition.id, prId));
+    revalidatePath(`/dashboard/procurement/requisition/${prId}`);
+  }
+  if (prIds.length > 0) revalidatePath("/dashboard/procurement/requisition");
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
+  return { ok: true };
 }

@@ -907,15 +907,18 @@ export function PurchaseOrderDetailClient({
                 )}
                 {can("purchase-order:approve") && recallBlockers.length > 0 && (
                   <p className="text-[11px] text-muted-foreground leading-snug">
-                    Can&apos;t recall — active documents raised from this PO: {recallBlockers.join(", ")}.
+                    Can&apos;t recall or cancel — active documents raised from this PO: {recallBlockers.join(", ")}.
                   </p>
                 )}
-                {can("purchase-order:approve") && (
+                {can("purchase-order:approve") && recallBlockers.length === 0 && (
                   <Button
                     size="sm" variant="outline"
                     className="w-full gap-1.5 h-8 text-xs text-destructive hover:text-destructive border-destructive/30"
                     disabled={!!actioning}
-                    onClick={() => act("cancel", () => cancelPurchaseOrder(order.id), "cancelled", "Purchase order cancelled")}
+                    onClick={() => act("cancel", async () => {
+                      const res = await cancelPurchaseOrder(order.id);
+                      if (!res.ok) throw new Error(res.error);
+                    }, "cancelled", "Purchase order cancelled")}
                   >
                     <XIcon className="w-3.5 h-3.5" />
                     {actioning === "cancel" ? "Cancelling…" : "Cancel PO"}

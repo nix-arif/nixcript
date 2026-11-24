@@ -96,6 +96,13 @@ export async function upsertDocumentNumberingSettings(
   const perms = await getUserPermissions(userId, orgId);
   if (!hasAccess(perms, "document-settings:update")) throw new Error("Forbidden");
 
+  // Only the document types the settings page offers. Quotations are left out
+  // on purpose: their number comes from the profile's quotationNoFormat, so a
+  // "qt" row here would be saved but never used.
+  for (const s of settings) {
+    if (s.documentType === "qt" || !(s.documentType in DOC_TYPE_DEFAULTS)) throw new Error(`Unknown document type: ${s.documentType}`);
+  }
+
   for (const s of settings) {
     const existing = await db
       .select({ id: documentNumberingSetting.id })

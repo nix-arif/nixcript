@@ -12,8 +12,14 @@ import { SaveIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────
-type ConfigurableDocType = "so" | "po" | "do" | "inv";
-const DOC_TYPES: ConfigurableDocType[] = ["so", "po", "do", "inv"];
+// Every document whose number is built from these settings, grouped as shown.
+// Quotations aren't here: they use the "Quotation number format" above.
+type ConfigurableDocType = "so" | "do" | "inv" | "co" | "ci" | "pr" | "po" | "pl" | "gr" | "icpo" | "sc";
+const DOC_GROUPS: { label: string; types: ConfigurableDocType[] }[] = [
+  { label: "Sales",       types: ["so", "do", "inv", "co", "ci"] },
+  { label: "Procurement", types: ["pr", "po", "pl", "gr", "icpo", "sc"] },
+];
+const DOC_TYPES: ConfigurableDocType[] = DOC_GROUPS.flatMap((g) => g.types);
 
 interface NumberingState {
   prefix: string;
@@ -24,6 +30,9 @@ interface NumberingState {
   numberFormat: "standard" | "compact";
 }
 
+// With no saved row, the state mirrors what the server falls back to today
+// (getNumberingConfig: the full org slug as company code), so the preview is
+// the number actually being issued — and an untouched type is never saved.
 function makeDefaultNumberingState(
   docType: ConfigurableDocType,
   existing: NumberingSetting | undefined,
@@ -131,18 +140,24 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
 
   // ── Numbering ──────────────────────────────────────────────────────────
   const orgSlug = (data.slug ?? "ORG").slice(0, 3);
+  const savedTypes = new Set(numberingSettings.map((s) => s.documentType));
   const [numbering, setNumbering] = useState<Record<ConfigurableDocType, NumberingState>>(() => {
     const byType = Object.fromEntries(numberingSettings.map((s) => [s.documentType, s])) as Record<string, NumberingSetting>;
-    return {
-      so:  makeDefaultNumberingState("so",  byType["so"],  orgSlug),
-      po:  makeDefaultNumberingState("po",  byType["po"],  orgSlug),
-      do:  makeDefaultNumberingState("do",  byType["do"],  orgSlug),
-      inv: makeDefaultNumberingState("inv", byType["inv"], orgSlug),
-    };
+    const state = Object.fromEntries(
+      DOC_TYPES.map((dt) => [dt, makeDefaultNumberingState(dt, byType[dt], data.slug ?? "ORG")]),
+    ) as Record<ConfigurableDocType, NumberingState>;
+    // No saved ICPO numbering: it follows the PO numbering with doc code ICPO
+    // (lib/intercompany/icpo-number.ts), so show that rather than the slug default.
+    if (!byType["icpo"]) state.icpo = { ...state.po, docCode: DOC_TYPE_DEFAULTS.icpo.docCode };
+    return state;
   });
+  // Types edited on this visit — saved along with the ones that already have
+  // a row; the rest stay on the server's fallback so Save changes nothing for them.
+  const [editedTypes, setEditedTypes] = useState<Set<ConfigurableDocType>>(new Set());
 
   function updateNumbering(docType: ConfigurableDocType, patch: Partial<NumberingState>) {
     setNumbering((prev) => ({ ...prev, [docType]: { ...prev[docType], ...patch } }));
+    setEditedTypes((prev) => (prev.has(docType) ? prev : new Set(prev).add(docType)));
   }
 
   // ── Branding ───────────────────────────────────────────────────────────
@@ -191,7 +206,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
 
       await Promise.all([
         upsertDocumentNumberingSettings(
-          DOC_TYPES.map((dt) => ({
+          DOC_TYPES.filter((dt) => savedTypes.has(dt) || editedTypes.has(dt)).map((dt) => ({
             documentType:  dt,
             prefix:        numbering[dt].prefix.trim(),
             docCode:       numbering[dt].docCode.trim().toUpperCase(),
@@ -868,10 +883,11 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
             </div>
           </Row>
 
-          {/* Document numbering — SO / PO / DO / INV */}
-          <Row label="Document number formats">
+          {/* Document numbering — every document built from these settings */}
+          {DOC_GROUPS.map((group) => (
+          <Row key={group.label} label={`${group.label} documents`}>
             <div className="space-y-2">
-              {DOC_TYPES.map((dt) => {
+              {group.types.map((dt) => {
                 const s = numbering[dt];
                 const previewNo = buildDocumentNo(
                   {
@@ -902,7 +918,14 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
                   <div key={dt} className="border border-border rounded-xl overflow-hidden">
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-2.5 bg-muted/20 border-b border-border">
-                      <span className="text-xs font-semibold">{DOC_TYPE_DEFAULTS[dt].label}</span>
+                      <span className="text-xs font-semibold flex items-center gap-2">
+                        {DOC_TYPE_DEFAULTS[dt].label}
+                        {!savedTypes.has(dt) && !editedTypes.has(dt) && (
+                          <span className="text-[10px] font-normal text-muted-foreground border border-border rounded px-1.5 py-0.5" title="Not customised yet — this is the number issued today">
+                            Default
+                          </span>
+                        )}
+                      </span>
                       <span className="font-mono text-xs px-2 py-0.5 rounded border bg-background border-border">{previewNo}</span>
                     </div>
 
@@ -975,6 +998,7 @@ export function DocumentSettingsClient({ data, numberingSettings }: Props) {
               })}
             </div>
           </Row>
+          ))}
         </div>
       )}
 
