@@ -424,6 +424,68 @@ export async function insertLedgerEntry(orgId: string, userId: string, data: Cre
   return entryId;
 }
 
+// Re-saves a DRAFT entry from the journal-entry form ("Save as Draft" again,
+// without leaving the form): header, lines and linked invoices replaced, with
+// the same balance and account checks as insertLedgerEntry. A posted or void
+// entry is never touched — its figures are the audit trail.
+export async function updateDraftLedgerEntry(id: string, data: CreateLedgerEntryInput): Promise<void> {
+  const { orgId } = await requireAccess("account:create");
+  const [entry] = await db.select({ status: ledgerEntry.status }).from(ledgerEntry)
+    .where(and(eq(ledgerEntry.id, id), eq(ledgerEntry.organizationId, orgId)))
+    .limit(1);
+  if (!entry) throw new Error("Entry not found");
+  if (entry.status !== "DRAFT") throw new Error("Only a draft entry can be changed — this one is already " + entry.status.toLowerCase());
+
+  const totalDebit = data.lines.reduce((s, l) => s + parseFloat(l.debit || "0"), 0);
+  const totalCredit = data.lines.reduce((s, l) => s + parseFloat(l.credit || "0"), 0);
+  if (Math.abs(totalDebit - totalCredit) > 0.001) throw new Error("Journal entry is not balanced: debits must equal credits.");
+
+  const accountIds = [...new Set(data.lines.map((l) => l.accountId))];
+  const accounts = await db.select().from(ledgerAccount).where(and(inArray(ledgerAccount.id, accountIds), eq(ledgerAccount.organizationId, orgId)));
+  if (accounts.length !== accountIds.length) throw new Error("One or more ledger accounts not found");
+  const accountMap = Object.fromEntries(accounts.map((a) => [a.id, a]));
+
+  await db.update(ledgerEntry).set({
+    date: data.date,
+    description: data.description,
+    transactionType: data.transactionType,
+    referenceType: data.referenceType || "NONE",
+    referenceId: data.referenceId || null,
+    referenceNo: data.referenceNo || null,
+    stakeholderType: data.stakeholderType || "NONE",
+    stakeholderId: data.stakeholderId || null,
+    stakeholderName: data.stakeholderName || null,
+    totalAmount: totalDebit.toFixed(2),
+    updatedAt: new Date(),
+  }).where(eq(ledgerEntry.id, id));
+
+  // No transactions on neon-http: insert the new lines first, then remove the
+  // old ones — a failure part-way leaves the old lines, never an empty entry.
+  const oldLines = await db.select({ id: ledgerLine.id }).from(ledgerLine).where(eq(ledgerLine.entryId, id));
+  await db.insert(ledgerLine).values(data.lines.map((l) => ({
+    id: nanoid(),
+    entryId: id,
+    accountId: l.accountId,
+    accountCode: accountMap[l.accountId]?.code ?? "",
+    accountName: accountMap[l.accountId]?.name ?? "",
+    debit: l.debit || "0",
+    credit: l.credit || "0",
+    currency: l.currency || null,
+    amountForeign: l.amountForeign || null,
+    exchangeRate: l.exchangeRate || null,
+    description: l.description || null,
+    createdAt: new Date(),
+  })));
+  if (oldLines.length > 0) await db.delete(ledgerLine).where(inArray(ledgerLine.id, oldLines.map((l) => l.id)));
+
+  await db.delete(ledgerEntryInvoice).where(eq(ledgerEntryInvoice.entryId, id));
+  if (data.invoiceIds && data.invoiceIds.length > 0) {
+    const invoices = await db.select({ id: invoice.id, invoiceNo: invoice.invoiceNo }).from(invoice).where(inArray(invoice.id, data.invoiceIds));
+    const invoiceNoMap = Object.fromEntries(invoices.map((i) => [i.id, i.invoiceNo]));
+    await db.insert(ledgerEntryInvoice).values(data.invoiceIds.map((invId) => ({ id: nanoid(), entryId: id, invoiceId: invId, invoiceNo: invoiceNoMap[invId] ?? "" })));
+  }
+}
+
 export async function postLedgerEntry(id: string): Promise<void> {
   const { orgId } = await requireAccess("account:update");
   const entry = await db.select().from(ledgerEntry)

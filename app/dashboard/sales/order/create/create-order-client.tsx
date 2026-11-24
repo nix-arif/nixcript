@@ -602,6 +602,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     try {
       const data = await getCustomerPoForSoCreate(cpoId);
       if (!data) return;
+      // a CPO belongs to at most one SO
+      if (data.linkedSo && data.linkedSo.status !== "cancelled") {
+        toast.error(`${data.customerPoNo} is already on sales order ${data.linkedSo.soNo} — a customer PO can only be on one sales order`);
+        return;
+      }
 
       const inheritedAddr = data.deliveryAddress
         || [data.customerSnapshot?.organizationName, data.customerSnapshot?.organizationAddress].filter(Boolean).join("\n")
@@ -1448,8 +1453,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     try {
       const so = await buildAndCreate(false);
       if (!so) return;
-      toast.success("Sales order created");
-      router.push(cpo ? `/dashboard/sales/customer-po/${cpo.id}` : "/dashboard/sales/order");
+      toast.success(`Draft saved — ${so.soNo}`);
+      // Stay in the form: switch to this SO's edit page (same form, now saved —
+      // saving again updates it instead of creating another). Replaces the
+      // create step so Back doesn't return to an empty form.
+      router.replace(`/dashboard/sales/order/${so.id}/edit?saved=1`);
     } catch (e: any) {
       toast.error(e.message);
     } finally {

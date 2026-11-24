@@ -1,6 +1,7 @@
 "use client";
 
 import { BackButton } from "@/components/back-button";
+import { DraftSavedNote } from "@/components/draft-saved-note";
 import { useState, useRef, useId, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -109,6 +110,13 @@ export function ApplyTravelClient({ ratePerKm, draft }: Props) {
   const [notes, setNotes] = useState(draft?.notes ?? "");
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([]);
   const [existingDocs, setExistingDocs] = useState<TravelFormDocumentRow[]>(draft?.documents ?? []);
+  // Fresh documents from the server (after a draft save refreshes the page): show them
+  const [seenDocs, setSeenDocs] = useState(draft?.documents);
+  if (draft?.documents !== seenDocs) { setSeenDocs(draft?.documents); setExistingDocs(draft?.documents ?? []); }
+  // The draft being edited — set as soon as a new one is first saved, so saving
+  // again (even before the page has caught up) updates it instead of making another.
+  const draftIdRef = useRef<string | undefined>(draft?.id);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
 
@@ -268,8 +276,9 @@ export function ApplyTravelClient({ ratePerKm, draft }: Props) {
     try {
       const stopInputs = buildStopInputs();
       const payload = { stops: stopInputs, notes: notes.trim() || undefined };
-      const formId = draft ? draft.id : await applyForTravelForm(payload);
-      if (draft) await finalizeDraftTravelForm(draft.id, payload);
+      const existingId = draftIdRef.current;
+      const formId = existingId ?? await applyForTravelForm(payload);
+      if (existingId) await finalizeDraftTravelForm(existingId, payload);
 
       await uploadQueuedFiles(formId);
 
@@ -290,13 +299,21 @@ export function ApplyTravelClient({ ratePerKm, draft }: Props) {
     try {
       const stopInputs = buildStopInputs();
       const payload = { stops: stopInputs, notes: notes.trim() || undefined };
-      const formId = draft ? draft.id : await saveDraftTravelForm(payload);
-      if (draft) await updateDraftTravelForm(draft.id, payload);
+      const existingId = draftIdRef.current;
+      const formId = existingId ?? await saveDraftTravelForm(payload);
+      if (existingId) await updateDraftTravelForm(existingId, payload);
+      draftIdRef.current = formId;
 
       await uploadQueuedFiles(formId);
 
+      // Stay on the form (no redirect): a new draft switches to its own address
+      // so it can be reopened, an existing one just reloads its saved documents.
       toast.success("Draft saved");
-      startTransition(() => router.push("/dashboard/human-resources/travel"));
+      setSavedAt(new Date());
+      startTransition(() => {
+        if (existingId) router.refresh();
+        else router.replace(`/dashboard/human-resources/travel/apply?draftId=${formId}`);
+      });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to save draft");
     } finally {
@@ -311,13 +328,14 @@ export function ApplyTravelClient({ ratePerKm, draft }: Props) {
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold flex items-center gap-2">
             <RouteIcon className="h-5 w-5 text-muted-foreground"/>
-            {draft ? "Continue Draft" : "New Travel Form"}
+            {draft || savedAt ? "Continue Draft" : "New Travel Form"}
           </h1>
           <p className="text-sm text-muted-foreground">Request authorization before your trip. Once approved, it can pre-fill your expense claim.</p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-5 max-w-2xl">
+        <DraftSavedNote docNo={draft?.applicationNo} savedAt={savedAt} />
         <section className="rounded-lg border border-border overflow-hidden">
           <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between">
             <h2 className="text-sm font-semibold">Itinerary</h2>
@@ -511,7 +529,7 @@ export function ApplyTravelClient({ ratePerKm, draft }: Props) {
             {savingDraft ? "Saving…" : "Save as Draft"}
           </Button>
           <Button type="submit" disabled={!isFormValid || submitting || savingDraft}>
-            {submitting ? "Submitting…" : draft ? "Submit Draft" : "Submit Travel Form"}
+            {submitting ? "Submitting…" : draft || savedAt ? "Submit Draft" : "Submit Travel Form"}
           </Button>
         </div>
       </form>

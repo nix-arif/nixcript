@@ -6,9 +6,14 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createLedgerEntry,
+  updateDraftLedgerEntry,
+  getLedgerEntry,
   createLedgerDocumentRecord,
   type CreateLedgerEntryInput,
+  type LedgerEntryWithDetails,
 } from "@/server/ledger";
+import Link from "next/link";
+import { DraftSavedNote } from "@/components/draft-saved-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -123,6 +128,28 @@ function newLine(): LineItem {
   };
 }
 
+// A saved draft's lines back into the form's shape (0 shown as blank, as typed).
+function linesFromDraft(draft: LedgerEntryWithDetails): LineItem[] {
+  const blank = (v: string | null) => (v && parseFloat(v) !== 0 ? v : "");
+  const rows = draft.lines.map((l) => ({
+    id: Math.random().toString(36).slice(2),
+    accountId: l.accountId,
+    debit: blank(l.debit),
+    credit: blank(l.credit),
+    description: l.description ?? "",
+    currency: l.currency ?? "",
+    amountForeign: l.amountForeign ?? "",
+    exchangeRate: l.exchangeRate ?? "",
+    showFx: !!l.currency,
+  }));
+  return rows.length >= 2 ? rows : [...rows, ...Array.from({ length: 2 - rows.length }, newLine)];
+}
+
+function referenceIdsFromDraft(draft: LedgerEntryWithDetails): string[] {
+  if (draft.referenceType === "INVOICE" && draft.linkedInvoices.length > 0) return draft.linkedInvoices.map((i) => i.invoiceId);
+  return draft.referenceId ? [draft.referenceId] : [];
+}
+
 function fmtFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -131,23 +158,28 @@ function fmtFileSize(bytes: number): string {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export function NewEntryClient({ refData }: { refData: RefData }) {
+// draft: a saved DRAFT entry to continue (the page's ?draftId=), or none for a new one.
+export function NewEntryClient({ refData, draft }: { refData: RefData; draft?: LedgerEntryWithDetails | null }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const today = new Date().toISOString().split("T")[0];
 
-  const [date, setDate] = useState(today);
-  const [description, setDescription] = useState("");
-  const [transactionType, setTransactionType] = useState("");
-  const [stakeholderType, setStakeholderType] = useState("NONE");
-  const [stakeholderId, setStakeholderId] = useState("");
-  const [referenceType, setReferenceType] = useState("NONE");
-  const [referenceIds, setReferenceIds] = useState<string[]>([]);
+  const [date, setDate] = useState(draft?.date ?? today);
+  const [description, setDescription] = useState(draft?.description ?? "");
+  const [transactionType, setTransactionType] = useState(draft?.transactionType ?? "");
+  const [stakeholderType, setStakeholderType] = useState(draft?.stakeholderType ?? "NONE");
+  const [stakeholderId, setStakeholderId] = useState(draft?.stakeholderId ?? "");
+  const [referenceType, setReferenceType] = useState(draft?.referenceType ?? "NONE");
+  const [referenceIds, setReferenceIds] = useState<string[]>(() => (draft ? referenceIdsFromDraft(draft) : []));
   const [invoiceSearch, setInvoiceSearch] = useState("");
-  const [lines, setLines] = useState<LineItem[]>([newLine(), newLine()]);
+  const [lines, setLines] = useState<LineItem[]>(() => (draft ? linesFromDraft(draft) : [newLine(), newLine()]));
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([]);
   const [saving, setSaving] = useState(false);
+  // The draft this form is editing — set by the first save, so saving again
+  // updates it (updateDraftLedgerEntry) instead of creating another entry.
+  const draftIdRef = useRef<string | null>(draft?.id ?? null);
+  const [savedDraft, setSavedDraft] = useState<{ id: string; entryNo: string | null; at: Date } | null>(null);
   const [accountSearch, setAccountSearch] = useState<Record<string, string>>({});
 
   // Balance calculations
@@ -316,12 +348,16 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
         })),
       };
 
-      const entryId = await createLedgerEntry(input);
+      const existingId = draftIdRef.current;
+      if (existingId) await updateDraftLedgerEntry(existingId, input);
+      const entryId = existingId ?? await createLedgerEntry(input);
+      draftIdRef.current = entryId;
 
-      // Upload queued files
-      if (queuedFiles.length > 0) {
-        setQueuedFiles((prev) => prev.map((f) => ({ ...f, status: "uploading" })));
-        for (const qf of queuedFiles) {
+      // Upload queued files not uploaded by an earlier save
+      const pending = queuedFiles.filter((f) => f.status !== "done");
+      if (pending.length > 0) {
+        setQueuedFiles((prev) => prev.map((f) => (f.status === "done" ? f : { ...f, status: "uploading" })));
+        for (const qf of pending) {
           const result = await uploadFile(entryId, qf);
           if (result) {
             await createLedgerDocumentRecord({
@@ -342,8 +378,13 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
         }
       }
 
-      toast.success("Journal entry created");
-      router.push(`/dashboard/ledger/entries/${entryId}`);
+      // Stay on the form (no redirect) and say it's saved; posting is done
+      // from the entry's own page, linked from the note.
+      const entryNo = savedDraft?.entryNo ?? draft?.entryNo ?? (await getLedgerEntry(entryId).catch(() => null))?.entryNo ?? null;
+      setSavedDraft({ id: entryId, entryNo, at: new Date() });
+      toast.success(entryNo ? `Draft saved — ${entryNo}` : "Draft saved");
+      // A new draft: switch to its address (no history step) so a reload reopens it here.
+      if (!existingId) router.replace(`/dashboard/ledger/entries/new?draftId=${entryId}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to create entry");
     } finally {
@@ -375,10 +416,18 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
           <ArrowLeftIcon className="h-4 w-4" />
         </Button>
         <div>
-          <h1 className="text-xl font-semibold">New Journal Entry</h1>
+          <h1 className="text-xl font-semibold">{savedDraft || draft ? "Draft Journal Entry" : "New Journal Entry"}</h1>
           <p className="text-sm text-muted-foreground">Create a new general ledger journal entry.</p>
         </div>
       </div>
+
+      {savedDraft && (
+        <DraftSavedNote
+          docNo={savedDraft.entryNo}
+          savedAt={savedDraft.at}
+          action={<Link href={`/dashboard/ledger/entries/${savedDraft.id}`} className="text-xs font-medium underline underline-offset-2">Open entry to post it</Link>}
+        />
+      )}
 
       {/* Entry Header Fields */}
       <div className="rounded-lg border border-border p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -814,6 +863,15 @@ export function NewEntryClient({ refData }: { refData: RefData }) {
             className="hidden"
             onChange={handleFileSelect}
           />
+          {/* already attached to the saved draft (manage them from the entry's page) */}
+          {draft && draft.documents.length > 0 && (
+            <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+              <span>Already attached to this draft:</span>
+              {draft.documents.map((d) => (
+                <span key={d.id} className="font-medium text-foreground truncate">{d.fileName}</span>
+              ))}
+            </div>
+          )}
           {queuedFiles.length > 0 && (
             <div className="flex flex-col gap-1.5">
               {queuedFiles.map((qf) => (

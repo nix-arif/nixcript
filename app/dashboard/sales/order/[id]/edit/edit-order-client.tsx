@@ -2,7 +2,8 @@
 
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { DraftSavedNote } from "@/components/draft-saved-note";
 import { toast } from "sonner";
 import {
   updateSalesOrder,
@@ -357,6 +358,14 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
   // ── Header ──────────────────────────────────────────────────────────────────
   const [status, setStatus] = useState(order.status ?? "draft");
+  // Not submitted yet: saving keeps the user here (no redirect) and says it's saved.
+  const isUnsubmitted = status === "draft" || status === "pending-do" || status === "pending-pr";
+  const searchParams = useSearchParams();
+  const [savedAt, setSavedAt] = useState<Date | "just-now" | null>(searchParams.get("saved") === "1" ? "just-now" : null);
+  useEffect(() => {
+    // arrived from "Save as Draft" on the create form: drop the marker so a reload doesn't repeat the note
+    if (searchParams.get("saved") === "1") window.history.replaceState(window.history.state, "", window.location.pathname);
+  }, [searchParams]);
   const spInputRef = useRef<HTMLInputElement>(null);
   const [spInput, setSpInput] = useState("");
   const [salesPersons, setSalesPersons] = useState<{ id: string; name: string; isExt: boolean }[]>(() => {
@@ -568,7 +577,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
     if (val.length < 2) { setCpoResults([]); return; }
     if (cpoTimer.current) clearTimeout(cpoTimer.current);
     cpoTimer.current = setTimeout(async () => {
-      setCpoResults(await searchCustomerPosByNo(val));
+      setCpoResults(await searchCustomerPosByNo(val, order.id));
       setCpoHighlight(-1);
     }, 300);
   }, []);
@@ -591,6 +600,11 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
     try {
       const data = await getCustomerPoForSoCreate(cpoId);
       if (!data) return;
+      // a CPO belongs to at most one SO
+      if (data.linkedSo && data.linkedSo.status !== "cancelled" && data.linkedSo.id !== order.id) {
+        toast.error(`${data.customerPoNo} is already on sales order ${data.linkedSo.soNo} — a customer PO can only be on one sales order`);
+        return;
+      }
       const spInherited = data.salesPersonName ?? null;
       const dateInherited = data.deliveryDate ? new Date(data.deliveryDate).toISOString().slice(0, 10) : "";
       const addrInherited = (data.customerSnapshot as any)?.organizationAddress ?? null;
@@ -878,8 +892,14 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           privateLabelSource: _privateLabelSource ?? null,
         })),
       });
-      toast.success("Sales order updated");
-      router.push(backHref);
+      if (isUnsubmitted) {
+        toast.success(`Draft saved — ${order.soNo}`);
+        setSavedAt(new Date());
+        router.refresh();
+      } else {
+        toast.success("Sales order updated");
+        router.push(backHref);
+      }
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -918,6 +938,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       />
 
       <div className="space-y-6">
+        <DraftSavedNote docNo={order.soNo} savedAt={savedAt} />
 
         {/* ── Urgent authorization ── */}
         {isUrgent && (

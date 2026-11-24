@@ -565,7 +565,9 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
       }
       committedRef.current = true;
       toast.success(submit ? "Purchase requisition submitted for approval" : "Purchase requisition saved as draft");
-      router.push(`/dashboard/procurement/requisition/${pr.id}`);
+      // the saved PR's own page (where a draft is edited); replaces the create
+      // step so Back doesn't return to an empty form
+      router.replace(`/dashboard/procurement/requisition/${pr.id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Something went wrong");
     } finally {

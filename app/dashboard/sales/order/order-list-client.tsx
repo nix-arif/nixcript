@@ -1,5 +1,6 @@
 "use client";
 
+import { SoTrailHover } from "./so-trail-hover";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -296,8 +297,8 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
             )];
 
             return (
+              <SoTrailHover key={o.id} id={o.id} soNo={o.soNo}>
               <div
-                key={o.id}
                 className="flex overflow-hidden rounded-xl border border-border bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                 onClick={() => router.push(`/dashboard/sales/order/${o.id}`)}
               >
@@ -398,6 +399,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                   </div>
                 </div>
               </div>
+              </SoTrailHover>
             );
           })}
         </div>

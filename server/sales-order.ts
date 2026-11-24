@@ -579,8 +579,32 @@ export async function getSalesOrderForPrint(id: string) {
 
 // ── Mutations ──────────────────────────────────────────────────────────────
 
+// The CPO ids an SO input links: customerPoLinks, or the single customerPoId.
+function cpoIdsOf(input: { customerPoLinks?: { customerPoId: string }[] | null; customerPoId?: string | null }): string[] {
+  const ids = input.customerPoLinks?.length ? input.customerPoLinks.map((l) => l.customerPoId) : input.customerPoId ? [input.customerPoId] : [];
+  return [...new Set(ids.filter(Boolean))];
+}
+
+// A CPO belongs to at most one SO (an SO may combine several CPOs). Why these
+// CPOs can't go on SO `soId` (null: a new SO), or null when they can: each
+// must be in this org and have no SO yet — or one that's cancelled, or this SO.
+async function cpoLinkConflict(orgId: string, cpoIds: string[], soId: string | null): Promise<string | null> {
+  if (cpoIds.length === 0) return null;
+  const rows = await db
+    .select({ id: customerPurchaseOrder.id, customerPoNo: customerPurchaseOrder.customerPoNo, salesOrderId: customerPurchaseOrder.salesOrderId, soNo: salesOrder.soNo, soStatus: salesOrder.status })
+    .from(customerPurchaseOrder)
+    .leftJoin(salesOrder, eq(salesOrder.id, customerPurchaseOrder.salesOrderId))
+    .where(and(inArray(customerPurchaseOrder.id, cpoIds), eq(customerPurchaseOrder.organizationId, orgId)));
+  if (rows.length !== cpoIds.length) return "One or more customer POs were not found";
+  const taken = rows.filter((r) => r.salesOrderId && r.salesOrderId !== soId && r.soStatus !== "cancelled");
+  if (taken.length === 0) return null;
+  return `A customer PO can only be on one sales order — ${taken.map((r) => `${r.customerPoNo} is already on ${r.soNo ?? "another sales order"}`).join("; ")}`;
+}
+
 export async function createSalesOrder(input: CreateSalesOrderInput): Promise<SalesOrderRow> {
   const { orgId, userId } = await requireAccess("sales-order:create");
+  const conflict = await cpoLinkConflict(orgId, cpoIdsOf(input), null);
+  if (conflict) throw new Error(conflict);
   return applyCreateSalesOrder(orgId, userId, input);
 }
 
@@ -926,6 +950,14 @@ async function applySalesOrderUpdate(
   if (existing.status === "submitted" || existing.status === "confirmed")
     throw new Error("Cannot edit a submitted or confirmed sales order");
 
+  // CPOs added to / removed from this SO (only when the links are being changed)
+  const oldCpoIds = cpoIdsOf({ customerPoLinks: existing.customerPoLinks as { customerPoId: string }[] | null, customerPoId: existing.customerPoId });
+  const newCpoIds = input.customerPoLinks !== undefined || input.customerPoId !== undefined ? cpoIdsOf(input) : oldCpoIds;
+  const addedCpoIds = newCpoIds.filter((id) => !oldCpoIds.includes(id));
+  const removedCpoIds = oldCpoIds.filter((id) => !newCpoIds.includes(id));
+  const conflict = await cpoLinkConflict(existing.organizationId, addedCpoIds, existing.id);
+  if (conflict) throw new Error(conflict);
+
   // Delete old R2 file if key changed
   if (
     input.supplierQuotationKey !== undefined &&
@@ -1040,6 +1072,17 @@ async function applySalesOrderUpdate(
         isAdditional: item.isAdditional ?? false,
       })),
     );
+  }
+
+  // Keep each CPO's own link in step with the SO's list: added CPOs point here,
+  // removed ones are free for another SO.
+  if (addedCpoIds.length > 0) {
+    await db.update(customerPurchaseOrder).set({ salesOrderId: existing.id, salesOrderNo: existing.soNo })
+      .where(and(eq(customerPurchaseOrder.organizationId, existing.organizationId), inArray(customerPurchaseOrder.id, addedCpoIds)));
+  }
+  if (removedCpoIds.length > 0) {
+    await db.update(customerPurchaseOrder).set({ salesOrderId: null, salesOrderNo: null })
+      .where(and(eq(customerPurchaseOrder.organizationId, existing.organizationId), inArray(customerPurchaseOrder.id, removedCpoIds), eq(customerPurchaseOrder.salesOrderId, existing.id)));
   }
 
   revalidatePath("/dashboard/sales/order");
@@ -1495,6 +1538,91 @@ export async function getSalesOrderCancelBlocker(soId: string): Promise<string |
     .from(salesOrder)
     .where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
   return so ? salesOrderCancelBlocker(orgId, so) : null;
+}
+
+// ── History (the SO list's hover card) ────────────────────────────────────
+
+export interface SalesOrderHistory {
+  so: {
+    soNo: string; status: string; grandTotal: string | null; stockReservationStatus: string | null;
+    createdAt: Date; createdByName: string | null;
+    submittedAt: Date | null; submittedByName: string | null;
+    approvedAt: Date | null; approvedByName: string | null;
+    updatedAt: Date | null;
+  };
+  // An intercompany SO: the sibling org's PO it was created from.
+  source: { orgName: string | null; poNo: string | null } | null;
+  cpos: { customerPoNo: string; receivedDate: Date | null; createdAt: Date }[];
+  prs: { prNo: string; status: string; createdAt: Date }[];
+  pos: { poNo: string | null; prNo: string | null; status: string; createdAt: Date; supplierName: string | null }[];
+  dos: { doNo: string; status: string; createdAt: Date; deliveryDate: Date | null }[];
+  invoices: { invoiceNo: string; status: string; grandTotal: string | null; createdAt: Date; paidAt: Date | null; paidAmount: string | null }[];
+}
+
+// Read-only, scoped to the active org: what's happened to this SO and the
+// documents raised from it, for the hover history on the SO list.
+export async function getSalesOrderHistory(soId: string): Promise<SalesOrderHistory | null> {
+  const { orgId } = await requireAccess("sales-order:read");
+  return salesOrderHistoryIn([orgId], soId);
+}
+
+// Same, for the centralized SO list: any org the caller's owner holds, under
+// the same permission that list needs.
+export async function getSalesOrderHistoryCentralized(soId: string): Promise<SalesOrderHistory | null> {
+  const { orgId, userId } = await requireAccess("sales-order:read:centralized");
+  return salesOrderHistoryIn(await getAllOwnerOrgIds(userId, orgId), soId);
+}
+
+// The SO must belong to one of `allowedOrgIds`; everything else is read from
+// the SO's own org.
+async function salesOrderHistoryIn(allowedOrgIds: string[], soId: string): Promise<SalesOrderHistory | null> {
+  const [so] = await db.select().from(salesOrder).where(and(eq(salesOrder.id, soId), inArray(salesOrder.organizationId, allowedOrgIds)));
+  if (!so) return null;
+  const orgId = so.organizationId;
+
+  const userIds = [so.createdBy, so.submittedBy, so.approvedBy].filter((v): v is string => !!v);
+  const [users, cpos, prs, dos, invs, source] = await Promise.all([
+    userIds.length ? db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds)) : Promise.resolve([]),
+    db.select({ customerPoNo: customerPurchaseOrder.customerPoNo, receivedDate: customerPurchaseOrder.receivedDate, createdAt: customerPurchaseOrder.createdAt })
+      .from(customerPurchaseOrder).where(and(eq(customerPurchaseOrder.salesOrderId, soId), eq(customerPurchaseOrder.organizationId, orgId))),
+    db.select({ id: purchaseRequisition.id, prNo: purchaseRequisition.prNo, status: purchaseRequisition.status, createdAt: purchaseRequisition.createdAt })
+      .from(purchaseRequisition).where(and(eq(purchaseRequisition.salesOrderId, soId), eq(purchaseRequisition.organizationId, orgId))),
+    db.select({ doNo: deliveryOrder.doNo, status: deliveryOrder.status, createdAt: deliveryOrder.createdAt, deliveryDate: deliveryOrder.deliveryDate })
+      .from(deliveryOrder).where(and(eq(deliveryOrder.salesOrderId, soId), eq(deliveryOrder.organizationId, orgId))),
+    db.select({ invoiceNo: invoice.invoiceNo, status: invoice.status, grandTotal: invoice.grandTotal, createdAt: invoice.createdAt, paidAt: invoice.paidAt, paidAmount: invoice.paidAmount })
+      .from(invoice).where(and(eq(invoice.salesOrderId, soId), eq(invoice.organizationId, orgId))),
+    so.sourcePurchaseOrderId
+      ? db.select({ poNo: purchaseOrder.poNo, orgName: organization.name }).from(purchaseOrder)
+          .leftJoin(organization, eq(organization.id, purchaseOrder.organizationId))
+          .where(eq(purchaseOrder.id, so.sourcePurchaseOrderId)).then((r) => r[0] ?? null)
+      : Promise.resolve(null),
+  ]);
+  const nameOf = (id: string | null) => users.find((u) => u.id === id)?.name ?? null;
+
+  const prIds = prs.map((p) => p.id);
+  const pos = await db
+    .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, status: purchaseOrder.status, createdAt: purchaseOrder.createdAt, supplierSnapshot: purchaseOrder.supplierSnapshot })
+    .from(purchaseOrder)
+    .where(and(
+      eq(purchaseOrder.organizationId, orgId),
+      prIds.length ? or(eq(purchaseOrder.salesOrderId, soId), inArray(purchaseOrder.purchaseRequisitionId, prIds)) : eq(purchaseOrder.salesOrderId, soId),
+    ));
+
+  return {
+    so: {
+      soNo: so.soNo, status: so.status, grandTotal: so.grandTotal, stockReservationStatus: so.stockReservationStatus,
+      createdAt: so.createdAt, createdByName: nameOf(so.createdBy),
+      submittedAt: so.submittedAt, submittedByName: nameOf(so.submittedBy),
+      approvedAt: so.approvedAt, approvedByName: nameOf(so.approvedBy),
+      updatedAt: so.updatedAt,
+    },
+    source: source ? { orgName: source.orgName, poNo: source.poNo } : null,
+    cpos,
+    prs: prs.map(({ prNo, status, createdAt }) => ({ prNo, status, createdAt })),
+    pos: pos.map((p) => ({ poNo: p.poNo, prNo: p.prNo, status: p.status, createdAt: p.createdAt, supplierName: (p.supplierSnapshot as { name?: string } | null)?.name ?? null })),
+    dos,
+    invoices: invs,
+  };
 }
 
 // Releases the SO's stock reservation, if it holds one.

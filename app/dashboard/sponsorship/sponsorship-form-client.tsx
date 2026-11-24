@@ -1,8 +1,9 @@
 "use client";
 
 import { BackButton } from "@/components/back-button";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { DraftSavedNote } from "@/components/draft-saved-note";
 import { toast } from "sonner";
 import { saveSponsorship, type SponsorshipInput } from "@/server/sponsorship";
 import { DECLARATION, fmtRM, ITEM_CATEGORIES, RECIPIENT_TYPES, sumAmounts } from "@/lib/sponsorship/core";
@@ -35,6 +36,13 @@ export function SponsorshipFormClient({ initial }: { initial?: FormInitial }) {
   const [declarationAccepted, setDeclaration] = useState(initial?.declarationAccepted ?? false);
   const [items, setItems] = useState<ItemRow[]>(initial?.items?.length ? initial.items.map((i) => row({ category: i.category, description: i.description, amount: String(i.amount) })) : [row()]);
   const [busy, setBusy] = useState(false);
+  // Saving a draft keeps the user on the form (no redirect) and says it's saved.
+  const searchParams = useSearchParams();
+  const [savedAt, setSavedAt] = useState<Date | "just-now" | null>(searchParams.get("saved") === "1" ? "just-now" : null);
+  useEffect(() => {
+    // arrived from the new-request form's first draft save: drop the marker so a reload doesn't repeat the note
+    if (searchParams.get("saved") === "1") window.history.replaceState(window.history.state, "", window.location.pathname);
+  }, [searchParams]);
   const total = sumAmounts(items);
   const patch = (key: string, p: Partial<ItemRow>) => setItems((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
 
@@ -47,9 +55,20 @@ export function SponsorshipFormClient({ initial }: { initial?: FormInitial }) {
         items: items.map((i) => ({ category: i.category, description: i.description, amount: i.amount })),
       }, submit);
       if (!r.ok) { toast.error(r.error, { duration: 9000 }); return; }
-      toast.success(submit ? "Request submitted" : "Draft saved");
-      router.push(submit || !r.value.id ? `/dashboard/sponsorship/${r.value.id}` : `/dashboard/sponsorship/${r.value.id}/edit`);
-      router.refresh();
+      if (submit) {
+        toast.success("Request submitted");
+        router.push(`/dashboard/sponsorship/${r.value.id}`);
+        router.refresh();
+      } else if (!initial?.id) {
+        // first save of a new request: continue in its edit form (replacing the
+        // "new" step, so saving again updates it and Back skips the empty form)
+        toast.success("Draft saved");
+        router.replace(`/dashboard/sponsorship/${r.value.id}/edit?saved=1`);
+      } else {
+        toast.success(`Draft saved${initial.sponsorshipNo ? ` — ${initial.sponsorshipNo}` : ""}`);
+        setSavedAt(new Date());
+        router.refresh();
+      }
     } catch (e: any) { toast.error(e.message); } finally { setBusy(false); }
   }
 
@@ -60,6 +79,7 @@ export function SponsorshipFormClient({ initial }: { initial?: FormInitial }) {
         description="Ask the company to sponsor a doctor, hospital, association or event"
         action={<BackButton fallback="/dashboard/sponsorship" variant="outline" size="sm" className="gap-1.5"><ArrowLeftIcon className="h-3.5 w-3.5" />Back</BackButton>}
       />
+      <DraftSavedNote docNo={initial?.sponsorshipNo} savedAt={savedAt} />
       {initial?.rejectReason && <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-700 dark:bg-red-900/20 dark:text-red-200"><span className="font-semibold">Rejected:</span> {initial.rejectReason}. Change what is needed and submit it again.</div>}
 
       <section className="rounded-xl border border-border bg-background p-4 space-y-4">

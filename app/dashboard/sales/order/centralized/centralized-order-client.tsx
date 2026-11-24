@@ -1,5 +1,6 @@
 "use client";
 
+import { SoTrailHover } from "../so-trail-hover";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -175,8 +176,8 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
             });
 
             return (
+              <SoTrailHover key={o.id} id={o.id} soNo={o.soNo} centralized>
               <div
-                key={o.id}
                 className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                 onClick={() => router.push(`/dashboard/sales/order/centralized/${o.id}`)}
               >
@@ -229,6 +230,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
                   </div>
                 </div>
               </div>
+              </SoTrailHover>
             );
           })}
         </div>

@@ -2,7 +2,8 @@
 
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { DraftSavedNote } from "@/components/draft-saved-note";
 import { toast } from "sonner";
 import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, checkCustomerPoNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
@@ -195,6 +196,13 @@ export function EditCustomerPoClient({
   });
   const [spInput, setSpInput] = useState("");
   const isDraft = cpo.status === "draft"; // not recorded yet
+  // Saving as a draft keeps the user here (no redirect) and says it's saved.
+  const searchParams = useSearchParams();
+  const [savedAt, setSavedAt] = useState<Date | "just-now" | null>(searchParams.get("saved") === "1" ? "just-now" : null);
+  useEffect(() => {
+    // arrived from "Save as draft" on the create form: drop the marker so a reload doesn't repeat the note
+    if (searchParams.get("saved") === "1") window.history.replaceState(window.history.state, "", window.location.pathname);
+  }, [searchParams]);
   const [status,         setStatus]         = useState(cpo.status === "draft" ? "received" : (cpo.status ?? "received"));
   const [notes,          setNotes]          = useState(cpo.notes ?? "");
 
@@ -862,8 +870,14 @@ export function EditCustomerPoClient({
         status: asDraft ? "draft" : status,
       });
       upload.markSaved(); // the new document belongs to the CPO now: not deleted when the form closes
-      toast.success(asDraft ? "Draft saved" : isDraft ? "Customer PO recorded" : "Customer PO updated");
-      router.push(backHref);
+      if (asDraft) {
+        toast.success("Draft saved");
+        setSavedAt(new Date());
+        router.refresh();
+      } else {
+        toast.success(isDraft ? "Customer PO recorded" : "Customer PO updated");
+        router.push(backHref);
+      }
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -909,6 +923,7 @@ export function EditCustomerPoClient({
       />
 
       <div className="space-y-5 w-full">
+        <DraftSavedNote docNo={cpo.customerPoNo} savedAt={savedAt} />
 
         {/* ── 1. The customer's PO document ── */}
         <div className="border border-border rounded-xl p-4 space-y-3">

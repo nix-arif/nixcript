@@ -24,7 +24,9 @@ import type {
 import {
   deleteClaim, submitClaim, saveDraftClaim, updateDraftClaim,
   finalizeDraftClaim, resubmitRejectedClaim, createClaimDocumentRecord, deleteClaimDocument,
+  getMyClaimApplications,
 } from "@/server/claim";
+import { DraftSavedNote } from "@/components/draft-saved-note";
 import type { TravelFormWithDetails } from "@/server/travel-form";
 import { getMyApprovedUnclaimedTravelForms } from "@/server/travel-form";
 import { formatTravelItinerary, travelLegLabel, travelPurposesSummary } from "@/lib/travel/itinerary";
@@ -696,6 +698,8 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
   const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
   const [editingApp, setEditingApp] = useState<ClaimApplicationWithDetails | null>(null);
+  // When "Save as Draft" last succeeded in the open form (shown as a note; the form stays open)
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
   const [savingDraft, setSavingDraft] = useState(false);
   // Tracks files already uploaded to R2 (key → {docId, fileKey}) so we skip re-upload on submit
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, { docId: string; fileKey: string }>>({});
@@ -967,6 +971,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
   // ── Reset ─────────────────────────────────────────────────────────────────
   function resetForm() {
     setEditingApp(null);
+    setDraftSavedAt(null);
     setSelectedTypeId(""); setClaimPeriod(""); setNote(""); setQueuedFiles([]);
     setExistingUnlinkedDocs([]);
     setTravelRows([emptyTravel()]); setMiscRows([]); setInEntRows([]); setOtherRows([]);
@@ -1083,6 +1088,7 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
 
   function loadAppIntoForm(app: ClaimApplicationWithDetails) {
     setEditingApp(app);
+    setDraftSavedAt(null);
     setSelectedTypeId(app.claimTypeId);
     const periodMatch = app.claimDate.match(/^(\d{4}-\d{2})-\d{2}$/);
     setClaimPeriod(periodMatch ? periodMatch[1] : "");
@@ -1643,8 +1649,15 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
         await uploadOneFile(job.file, appId, job.fieldKey, job.lineItemId);
       }
 
-      toast.success("Draft saved");
-      setSubmitOpen(false); resetForm();
+      // Stay in the form (no closing, no reset). It now edits this draft: saving
+      // again updates it, Submit submits it, and new receipts attach to it —
+      // the same as reopening the draft from the list. The form keeps what's
+      // typed (reloading it from the saved draft would drop rows a draft skips,
+      // e.g. ones without an amount yet).
+      const saved = (await getMyClaimApplications()).find((a) => a.id === appId);
+      if (saved) setEditingApp(saved);
+      toast.success(saved ? `Draft saved — ${saved.applicationNo}` : "Draft saved");
+      setDraftSavedAt(new Date());
       startTransition(() => router.refresh());
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to save draft");
@@ -1905,7 +1918,12 @@ export function MyClaimClient({ applications, claimTypes, permissions, customers
               {editingApp.checkerComment || editingApp.reviewComment}
             </div>
           )}
-          {editingApp?.status === "DRAFT" && (
+          {draftSavedAt && (
+            <div className="mb-4">
+              <DraftSavedNote docNo={editingApp?.applicationNo} savedAt={draftSavedAt} />
+            </div>
+          )}
+          {editingApp?.status === "DRAFT" && !draftSavedAt && (
             <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-700 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
               Continuing draft <span className="font-mono font-semibold">{editingApp.applicationNo}</span>. Files must be re-attached before submitting.
             </div>

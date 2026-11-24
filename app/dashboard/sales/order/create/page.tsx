@@ -25,7 +25,7 @@ export default async function CreateSalesOrderPage({
     }
   }
 
-  const [members, cpos, openCpos, profile] = await Promise.all([
+  const [members, requestedCpos, openCpos, profile] = await Promise.all([
     getOrgMembers().catch(() => []),
     Promise.all(cpoIds.map((id) => getCustomerPoForSoCreate(id).catch(() => null))).then(
       (results) => results.filter((r): r is NonNullable<typeof r> => r !== null)
@@ -33,6 +33,14 @@ export default async function CreateSalesOrderPage({
     getOpenCustomerPos().catch(() => []),
     getOrganizationProfile().catch(() => null),
   ]);
+
+  // A CPO belongs to at most one SO: one that already has a (live) SO isn't
+  // linked again. Opening "Create SO" from such a CPO goes to its SO instead.
+  const isTaken = (c: (typeof requestedCpos)[number]) => !!c.linkedSo && c.linkedSo.status !== "cancelled";
+  if (requestedCpos.length === 1 && isTaken(requestedCpos[0])) {
+    redirect(`/dashboard/sales/order/${requestedCpos[0].linkedSo!.id}`);
+  }
+  const cpos = requestedCpos.filter((c) => !isTaken(c));
 
   return (
     <CreateSalesOrderClient

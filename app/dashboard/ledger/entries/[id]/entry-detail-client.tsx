@@ -407,6 +407,13 @@ export function EntryDetailClient({ entry, refData, permissions }: Props) {
               Edit Details
             </Button>
           )}
+          {/* a draft's lines can still change: reopen it in the entry form */}
+          {canCreate && entry.status === "DRAFT" && (
+            <Button size="sm" variant="outline" onClick={() => router.push(`/dashboard/ledger/entries/new?draftId=${entry.id}`)}>
+              <PencilIcon className="h-4 w-4 mr-1" />
+              Edit draft
+            </Button>
+          )}
           {canUpdate && entry.status === "DRAFT" && (
             <Button
               size="sm"

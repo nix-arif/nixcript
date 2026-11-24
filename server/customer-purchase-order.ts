@@ -333,6 +333,8 @@ export type CustomerPoForSoCreate = {
   quotationNo: string | null;
   quotationLinks: { quotationId: string; quotationNo: string }[] | null;
   salesOrderId: string | null;
+  // The SO this CPO is already on (a CPO belongs to at most one SO), or null.
+  linkedSo: { id: string; soNo: string; status: string } | null;
   amount: string;
   currency: string;
   items: CpoItemInput[] | null;
@@ -363,10 +365,18 @@ export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoFo
       salesPersonName: customerPurchaseOrder.salesPersonName,
       associateSalesPersons: customerPurchaseOrder.associateSalesPersons,
       notes: customerPurchaseOrder.notes,
+      linkedSoNo: salesOrder.soNo,
+      linkedSoStatus: salesOrder.status,
     })
     .from(customerPurchaseOrder)
+    .leftJoin(salesOrder, eq(salesOrder.id, customerPurchaseOrder.salesOrderId))
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId), ne(customerPurchaseOrder.status, "draft")));
-  return row ?? null;
+  if (!row) return null;
+  const { linkedSoNo, linkedSoStatus, ...cpo } = row;
+  return {
+    ...cpo,
+    linkedSo: cpo.salesOrderId && linkedSoNo ? { id: cpo.salesOrderId, soNo: linkedSoNo, status: linkedSoStatus ?? "" } : null,
+  };
 }
 
 export type CustomerPoSearchResult = {
@@ -381,7 +391,10 @@ export type CustomerPoSearchResult = {
   status: string;
 };
 
-export async function searchCustomerPosByNo(query: string): Promise<CustomerPoSearchResult[]> {
+// For picking a CPO onto an SO: only CPOs not already on another SO (a CPO
+// belongs to at most one SO; one whose SO was cancelled is free again).
+// forSoId: the SO being edited — its own CPOs still match.
+export async function searchCustomerPosByNo(query: string, forSoId?: string): Promise<CustomerPoSearchResult[]> {
   const { orgId } = await requireAccess("customer-po:read");
   const rows = await db
     .select({
@@ -394,11 +407,17 @@ export async function searchCustomerPosByNo(query: string): Promise<CustomerPoSe
       status: customerPurchaseOrder.status,
     })
     .from(customerPurchaseOrder)
+    .leftJoin(salesOrder, eq(salesOrder.id, customerPurchaseOrder.salesOrderId))
     .where(
       and(
         eq(customerPurchaseOrder.organizationId, orgId),
         ilike(customerPurchaseOrder.customerPoNo, `%${query}%`),
         ne(customerPurchaseOrder.status, "draft"),
+        or(
+          isNull(customerPurchaseOrder.salesOrderId),
+          eq(salesOrder.status, "cancelled"),
+          ...(forSoId ? [eq(customerPurchaseOrder.salesOrderId, forSoId)] : []),
+        ),
       ),
     )
     .orderBy(desc(customerPurchaseOrder.createdAt))

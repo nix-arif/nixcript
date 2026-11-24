@@ -853,7 +853,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     setSaving(true);
     try {
       const primary = linkedQuotations[0];
-      await createCustomerPo({
+      const created = await createCustomerPo({
         customerPoNo:    customerPoNo.trim(),
         customerId:      primary?.customerId ?? undefined,
         customerOrgMemberId: primary?.customerOrgMemberId ?? undefined,
@@ -890,8 +890,16 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         status: asDraft ? "draft" : status,
       });
       upload.markSaved(); // the document belongs to the CPO now: not deleted when the form closes
-      toast.success(asDraft ? "Draft saved. Finish it later from the Customer PO list." : "Customer PO recorded");
-      router.push("/dashboard/sales/customer-po");
+      if (asDraft) {
+        toast.success(`Draft saved — ${created.customerPoNo}`);
+        // Stay in the form: switch to this draft's edit page (same form, now
+        // saved — saving again updates it instead of creating another).
+        // Replaces the create step so Back doesn't return to an empty form.
+        router.replace(`/dashboard/sales/customer-po/${created.id}/edit?saved=1`);
+      } else {
+        toast.success("Customer PO recorded");
+        router.push("/dashboard/sales/customer-po");
+      }
     } catch (e: any) {
       toast.error(e.message);
     } finally {
