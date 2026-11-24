@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDownIcon, ChevronRightIcon, DownloadIcon, SearchIcon, TruckIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, DownloadIcon, ExternalLinkIcon, SearchIcon, TruckIcon, XIcon } from "lucide-react";
+import { InspectionMediaThumb, DownloadMediaButton } from "@/components/inspection-media";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Highlight } from "@/components/highlight";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { PendingLine } from "@/server/pending-from-supplier";
+import type { PendingLine, PendingPhoto } from "@/server/pending-from-supplier";
 
 // The conditions a line can be pending under — any combination can be ticked.
 type Cond = "notShipped" | "short" | "replacement";
@@ -86,6 +87,9 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
   // One supplier (by name, so the same supplier is one choice across companies), or all
   const [supplierFilter, setSupplierFilter] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // The defect-photo viewer: the photos of one rejection, which one is showing, and a caption
+  const [viewer, setViewer] = useState<{ photos: PendingPhoto[]; index: number; caption: string } | null>(null);
+  const step = (d: number) => setViewer((v) => (v ? { ...v, index: (v.index + d + v.photos.length) % v.photos.length } : v));
 
   const base = centralized ? "/centralized" : "";
   const poHref = (id: string) => `/dashboard/procurement/purchase-order${base}/${id}`;
@@ -453,18 +457,26 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                                       </div>
                                       {r.photos.length > 0 && (
                                         <div className="mt-1 flex flex-wrap gap-1">
-                                          {r.photos.slice(0, 6).map((ph) => (
-                                            <a key={ph.id} href={ph.url} target="_blank" rel="noopener noreferrer" title="Defect photo — open full size" className="block">
-                                              {ph.kind === "image" ? (
-                                                // eslint-disable-next-line @next/next/no-img-element -- signed storage link, not an optimisable asset
-                                                <img src={ph.url} alt="Defect photo" loading="lazy" className="h-12 w-12 rounded border border-border object-cover" />
-                                              ) : (
-                                                <span className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted text-[10px] text-muted-foreground">▶ video</span>
-                                              )}
-                                            </a>
+                                          {r.photos.slice(0, 6).map((ph, pi) => (
+                                            <button
+                                              key={ph.id}
+                                              type="button"
+                                              onClick={() => setViewer({ photos: r.photos, index: pi, caption: `${r.grNo}${r.packingListNo ? ` · ${r.packingListNo}` : ""} · ${l.productCode ?? ""} ${l.description ?? ""}`.trim() })}
+                                              title={ph.kind === "video" ? "Play video" : "View photo"}
+                                              className="block h-12 w-12 overflow-hidden rounded border border-border hover:opacity-80 transition-opacity"
+                                            >
+                                              <InspectionMediaThumb media={ph} />
+                                            </button>
                                           ))}
                                           {r.photos.length > 6 && (
-                                            <span className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted text-[11px] text-muted-foreground">+{r.photos.length - 6}</span>
+                                            <button
+                                              type="button"
+                                              onClick={() => setViewer({ photos: r.photos, index: 6, caption: `${r.grNo}${r.packingListNo ? ` · ${r.packingListNo}` : ""} · ${l.productCode ?? ""} ${l.description ?? ""}`.trim() })}
+                                              className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted text-[11px] text-muted-foreground hover:bg-muted/70"
+                                              title="View all"
+                                            >
+                                              +{r.photos.length - 6}
+                                            </button>
                                           )}
                                         </div>
                                       )}
@@ -520,6 +532,68 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
               <DownloadIcon className="w-3.5 h-3.5" /> Download
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Defect photo / video viewer */}
+      <Dialog open={!!viewer} onOpenChange={(o) => !o && setViewer(null)}>
+        <DialogContent
+          className="sm:max-w-5xl p-0 overflow-hidden gap-0"
+          showCloseButton={false}
+          onKeyDown={(e) => {
+            if (!viewer || viewer.photos.length < 2) return;
+            if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+            if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+          }}
+        >
+          <DialogTitle className="sr-only">Defect {viewer?.photos[viewer.index]?.kind === "video" ? "video" : "photo"}</DialogTitle>
+          {viewer && (() => {
+            const cur = viewer.photos[viewer.index];
+            return (
+              <>
+                <div className="relative flex items-center justify-center bg-black">
+                  {cur.kind === "video" ? (
+                    <video key={cur.url} src={cur.url} controls autoPlay playsInline className="max-h-[75vh] w-full bg-black">
+                      Your browser can&apos;t play this video. <a href={cur.url} target="_blank" rel="noopener noreferrer">Open it</a> instead.
+                    </video>
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element -- signed storage link
+                    <img key={cur.url} src={cur.url} alt="Defect photo" className="max-h-[75vh] w-full object-contain" />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setViewer(null)}
+                    aria-label="Close"
+                    className="absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                  >
+                    <XIcon className="h-4 w-4" />
+                  </button>
+                  {viewer.photos.length > 1 && (
+                    <>
+                      <button type="button" onClick={() => step(-1)} aria-label="Previous"
+                        className="absolute left-2 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80">
+                        <ChevronLeftIcon className="h-5 w-5" />
+                      </button>
+                      <button type="button" onClick={() => step(1)} aria-label="Next"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80">
+                        <ChevronRightIcon className="h-5 w-5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 border-t px-4 py-2.5">
+                  <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {viewer.photos.length > 1 && <span className="mr-2 font-medium text-foreground tabular-nums">{viewer.index + 1} of {viewer.photos.length}</span>}
+                    {viewer.caption}
+                  </p>
+                  <a href={cur.url} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400">
+                    <ExternalLinkIcon className="h-3 w-3" /> Open original
+                  </a>
+                  <DownloadMediaButton photoId={cur.id} />
+                </div>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

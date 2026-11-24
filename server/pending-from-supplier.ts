@@ -17,6 +17,8 @@ import {
 } from "@/db/schema";
 import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { downloadUrl, extOf, IMAGE_EXTS } from "@/lib/r2/post-delivery";
+import { inspectionMediaShareUrl, publicBaseUrl } from "@/lib/inspection-media-share";
+import { headers } from "next/headers";
 import { requireAccess } from "@/lib/auth/require-access";
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
 
@@ -29,7 +31,9 @@ export type PendingShortPl = {
 // A defect photo / video taken when the line was rejected at inspection.
 // url: a signed link for the page; the PDF fetches images through
 // /api/pending-from-supplier/photo/[id] instead (same site).
-export type PendingPhoto = { id: string; kind: "image" | "video"; url: string };
+// shareUrl: a permanent, login-free link to view this one file (the same kind
+// the supplier discrepancy report uses) — what the PDF's thumbnails link to.
+export type PendingPhoto = { id: string; kind: "image" | "video"; url: string; shareUrl: string };
 export type PendingReturn = {
   goodsReceiptId: string; grNo: string; packingListNo: string | null;
   rejected: number; outstanding: number; inspectedAt: Date | null; shippedAt: Date | null;
@@ -50,18 +54,25 @@ export type PendingLine = {
   since: Date;
 };
 
+// The app's public address, for share links (APP_DOMAIN in production; see publicBaseUrl)
+async function shareBase(): Promise<string> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  return publicBaseUrl(new Request(`${h.get("x-forwarded-proto") ?? "http"}://${host}/`, { headers: h }));
+}
+
 export async function getPendingFromSupplier(): Promise<PendingLine[]> {
   const { orgId } = await requireAccess("purchase-order:read");
-  return computePending([orgId]);
+  return computePending([orgId], await shareBase());
 }
 
 // Same, across every company the caller's owner holds.
 export async function getPendingFromSupplierCentralized(): Promise<PendingLine[]> {
   const { orgId } = await requireAccess("purchase-order:read:centralized");
-  return computePending(await getOwnerOrgIds(orgId));
+  return computePending(await getOwnerOrgIds(orgId), await shareBase());
 }
 
-async function computePending(orgIds: string[]): Promise<PendingLine[]> {
+async function computePending(orgIds: string[], baseUrl: string): Promise<PendingLine[]> {
   if (orgIds.length === 0) return [];
 
   // PO lines of POs that went to the supplier (confirmed; a fulfilled PO can still have returns open)
@@ -119,7 +130,7 @@ async function computePending(orgIds: string[]): Promise<PendingLine[]> {
   await Promise.all(photoRows.map(async (p) => {
     const kind = IMAGE_EXTS.includes(extOf(p.key)) ? "image" as const : "video" as const;
     const url = await downloadUrl(p.key, { video: kind === "video" && extOf(p.key) === "mov" });
-    photosByPlItem.set(p.plItemId, [...(photosByPlItem.get(p.plItemId) ?? []), { id: p.id, kind, url }]);
+    photosByPlItem.set(p.plItemId, [...(photosByPlItem.get(p.plItemId) ?? []), { id: p.id, kind, url, shareUrl: inspectionMediaShareUrl(baseUrl, p.id) }]);
   }));
   // Real replacement shipments only. Some returns record the original shipment
   // itself as attempt #1 (the attempt points at the very packing-list line the

@@ -2,7 +2,7 @@
 // page is showing: the same lines after the condition / supplier / company /
 // search filters. Only the ticked conditions get a column. A4 landscape.
 
-import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
+import { PDFDocument, PDFString, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage, type RGB } from "pdf-lib";
 import type { PendingLine } from "@/server/pending-from-supplier";
 
 export type PdfCond = "notShipped" | "short" | "replacement";
@@ -54,7 +54,8 @@ function wrap(text: string, font: PDFFont, size: number, maxW: number): string[]
 
 // A cell is plain text lines — or, for the short / replacement columns, pieces:
 // styled text (wrapped to the column) and rows of defect-photo thumbnails.
-type Piece = { text: string; font: "regular" | "bold"; color: "ink" | "mid" | "amber" | "red" } | { photos: string[] };
+type PdfMedia = { id: string; kind: "image" | "video"; shareUrl: string };
+type Piece = { text: string; font: "regular" | "bold"; color: "ink" | "mid" | "amber" | "red" } | { photos: PdfMedia[] };
 type Col = { key: string; label: string; width: number; align?: "right"; cell: (l: PendingLine) => string[]; pieces?: (l: PendingLine) => Piece[] };
 const THUMB = 40, PHOTOS_PER_RETURN = 4;
 
@@ -89,11 +90,15 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
     replacement: {
       key: "replacement", label: input.condLabel.replacement, width: 170, cell: () => ["-"],
       pieces: (l) => (l.returns.length ? l.returns.flatMap((r): Piece[] => {
-        const photos = r.photos.filter((ph) => ph.kind === "image" && input.photos?.has(ph.id)).slice(0, PHOTOS_PER_RETURN).map((ph) => ph.id);
+        // photos that loaded, and videos (shown as a tile) — each one a link to view it full size
+        const photos = r.photos
+          .filter((ph) => ph.kind === "video" || input.photos?.has(ph.id))
+          .slice(0, PHOTOS_PER_RETURN)
+          .map((ph) => ({ id: ph.id, kind: ph.kind, shareUrl: ph.shareUrl }));
         return [
           { text: `Awaiting replacement: ${fmtQty(r.outstanding)} ${unitOf(l)}`, font: "bold", color: "red" },
           { text: `rejected on ${r.grNo}${r.packingListNo ? ` (${r.packingListNo})` : ""} · ${r.shippedAt ? `sent back ${fmtDate(r.shippedAt)}` : "not sent back yet"}`, font: "regular", color: "mid" },
-          ...(photos.length ? [{ photos }] : []),
+          ...(photos.length ? [{ photos }, { text: "click a photo to view it full size", font: "regular" as const, color: "mid" as const }] : []),
         ];
       }) : [{ text: "-", font: "regular", color: "ink" }]),
     },
@@ -118,6 +123,15 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
   const used = cols.reduce((s, c) => s + c.width, 0);
   cols[1].width = Math.max(140, CW - used);   // item column takes what's left
   const PAD = 4, SIZE = 7.5, LH = 9.5;
+
+  // A clickable area opening `url` in the reader's browser
+  const addLink = (pg: PDFPage, lx: number, ly: number, lw: number, lh: number, url: string) => {
+    const annot = pdf.context.obj({
+      Type: "Annot", Subtype: "Link", Rect: [lx, ly, lx + lw, ly + lh], Border: [0, 0, 0],
+      A: { Type: "Action", S: "URI", URI: PDFString.of(url) },
+    });
+    pg.node.addAnnot(pdf.context.register(annot));
+  };
 
   // defect photos, embedded once each
   const embedded = new Map<string, PDFImage>();
@@ -222,15 +236,22 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
           for (const it of L) {
             if ("photos" in it) {
               let px = x + PAD;
-              for (const id of it.photos ?? []) {
-                const img = embedded.get(id);
+              for (const m of it.photos ?? []) {
+                const img = m.kind === "image" ? embedded.get(m.id) : undefined;
+                // top-aligned just under the text above it
+                const w = img ? img.width * Math.min(THUMB / img.width, THUMB / img.height) : THUMB;
+                const h = img ? img.height * Math.min(THUMB / img.width, THUMB / img.height) : THUMB;
+                const by = cy + 4 - h;
                 if (img) {
-                  const sc = Math.min(THUMB / img.width, THUMB / img.height);
-                  // top-aligned just under the text above it
-                  page.drawImage(img, { x: px, y: cy + 4 - img.height * sc, width: img.width * sc, height: img.height * sc });
-                  page.drawRectangle({ x: px, y: cy + 4 - img.height * sc, width: img.width * sc, height: img.height * sc, borderColor: LINE, borderWidth: 0.5 });
-                  px += img.width * sc + 3;
+                  page.drawImage(img, { x: px, y: by, width: w, height: h });
+                } else {
+                  page.drawRectangle({ x: px, y: by, width: w, height: h, color: rgb(0.15, 0.15, 0.17) });
+                  const lbl = "> VIDEO";
+                  page.drawText(lbl, { x: px + (w - bold.widthOfTextAtSize(lbl, 6.5)) / 2, y: by + h / 2 - 2, size: 6.5, font: bold, color: rgb(1, 1, 1) });
                 }
+                page.drawRectangle({ x: px, y: by, width: w, height: h, borderColor: LINE, borderWidth: 0.5 });
+                addLink(page, px, by, w, h, m.shareUrl);
+                px += w + 3;
               }
               cy -= it.h;
             } else {
