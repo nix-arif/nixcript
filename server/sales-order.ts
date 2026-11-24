@@ -20,6 +20,7 @@ import {
   consignHeader,
   member,
   purchaseRequisition,
+  product,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
@@ -33,7 +34,8 @@ import { nextFreeDocNo } from "@/lib/document-number-group";
 import { revalidatePath } from "next/cache";
 import { adjustReservation } from "@/lib/inventory/create-movement";
 import { checkAndTriggerReplenishment } from "@/server/purchase-requisition";
-import { performStockCheckAndReserve, getSoStockStatus } from "@/server/stock-reservation";
+import { performStockCheckAndReserve } from "@/server/stock-reservation";
+import { soStockStatusFor } from "@/lib/inventory/so-stock-status";
 import { Resend } from "resend";
 import { testingSubject } from "@/lib/testing-mode";
 import { createNotification, getSoApprovers } from "@/server/notifications";
@@ -693,8 +695,11 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
   }
 
   // Determine correct initial status now that items are in the DB (product code
-  // resolution requires a DB lookup against this org's catalog).
-  const soStatus = await getSoStockStatus(orgId, row.id);
+  // resolution requires a DB lookup against this org's catalog). Not
+  // getSoStockStatus: that requires orgId to be the caller's active org, which
+  // the intercompany path (SO created in the receiving org) never is — it threw,
+  // and the CPO back-link below never ran. Both callers authorize orgId first.
+  const soStatus = await soStockStatusFor(orgId, row.id);
   if (soStatus !== "pending-do") {
     await db.update(salesOrder).set({ status: soStatus }).where(eq(salesOrder.id, row.id));
     row.status = soStatus;
@@ -789,6 +794,20 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
       .orderBy(asc(purchaseOrderItem.rowNo));
     if (poItems.length === 0) return;
 
+    // The PO lines' productId points into the *sending* org's catalog — wrong
+    // for an SO in the receiving org (its stock check would never match).
+    // Re-resolve each line by product code against the receiving org's own
+    // catalog; a code it doesn't carry stays unlinked, which the stock check
+    // treats as needing purchase (pending-pr).
+    const codes = [...new Set(poItems.map((i) => i.productCode?.trim()).filter((c): c is string => !!c))];
+    const targetProducts = codes.length > 0
+      ? await db
+          .select({ id: product.id, productCode: product.productCode })
+          .from(product)
+          .where(and(eq(product.organizationId, targetOrgId), inArray(product.productCode, codes)))
+      : [];
+    const targetProductId = new Map(targetProducts.map((p) => [p.productCode, p.id]));
+
     // The sending org's PO number *is* the receiving org's Customer PO
     // reference — customerPurchaseOrder.customerPoNo is defined as exactly
     // that ("the PO number on customer's document"). Creating this keeps
@@ -838,7 +857,7 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
       sourcePurchaseOrderId: poId,
       items: poItems.map((item) => ({
         rowNo: item.rowNo,
-        productId: item.productId ?? undefined,
+        productId: (item.productCode && targetProductId.get(item.productCode.trim())) || undefined,
         productCode: item.productCode ?? undefined,
         description: item.description ?? undefined,
         qty: item.qty ?? undefined,

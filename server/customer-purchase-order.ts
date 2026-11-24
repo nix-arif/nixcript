@@ -17,6 +17,7 @@ import {
   user,
   member,
   organization,
+  supplier,
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
@@ -26,6 +27,8 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { requireAccess } from "@/lib/auth/require-access";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 import { PO_TBC_PREFIX } from "@/lib/customer-po/po-number";
 import { findCpoNoClash, clashMessage } from "@/lib/customer-po/unique-no";
 const s3 = new S3Client({
@@ -634,17 +637,116 @@ export interface CustomerPoTrackingData {
     createdAt: Date; grandTotal: string | null;
     deliveryDate: Date | null;
   } | null;
-  internalPos: { id: string; prNo: string | null; poNo: string | null; status: string; createdAt: Date; grandTotal: string | null }[];
+  internalPos: { id: string; prNo: string | null; poNo: string | null; status: string; createdAt: Date; grandTotal: string | null; supplierId: string | null }[];
   dos: { id: string; doNo: string; status: string; createdAt: Date; deliveryDate: Date | null }[];
   invoices: {
     id: string; invoiceNo: string; status: string; createdAt: Date;
     grandTotal: string; dueDate: Date | null; paidAt: Date | null; paidAmount: string | null;
     paymentTerms: string | null;
   }[];
+  // Where the chain continues inside a sibling org: one leg per Supplier PO
+  // above that went to a linked sibling (see IntercompanyLeg).
+  intercompany: IntercompanyLeg[];
+}
+
+// One hop of the trail into a sibling org: our PO to it (viaPoNo), the SO
+// auto-created there from that PO, and the POs it raised from that SO — then
+// recursively onward if one of those went to yet another sibling. Numbers and
+// statuses only, never amounts (a sibling's supplier prices are its cost).
+// href is set only when the viewer can open the centralized SO/PO pages; the
+// plain ones are scoped to the active org and would 404.
+export interface IntercompanyLeg {
+  organizationName: string;
+  viaPoNo: string;
+  viaPoStatus: string;
+  so: { id: string; soNo: string; status: string; createdAt: Date; href: string | null } | null;
+  pos: { id: string; poNo: string | null; prNo: string | null; status: string; createdAt: Date; href: string | null }[];
+  next: IntercompanyLeg[];
+}
+
+type IcContext = { ownerOrgIds: Set<string>; canOpenSo: boolean; canOpenPo: boolean };
+
+const IC_MAX_DEPTH = 3;
+
+async function fetchIntercompanyLegs(
+  pos: { id: string; poNo: string | null; prNo: string | null; status: string; supplierId: string | null }[],
+  ctx: IcContext,
+  depth = 1,
+  seen = new Set<string>(),
+): Promise<IntercompanyLeg[]> {
+  if (depth > IC_MAX_DEPTH) return [];
+  const supplierIds = [...new Set(pos.map((p) => p.supplierId).filter((v): v is string => !!v))];
+  if (supplierIds.length === 0) return [];
+
+  const sups = await db
+    .select({ id: supplier.id, linkedOrganizationId: supplier.linkedOrganizationId })
+    .from(supplier)
+    .where(inArray(supplier.id, supplierIds));
+  // Only siblings under the same owner — a stale link to an org that changed hands is ignored.
+  const siblingOf = new Map(
+    sups.filter((x) => x.linkedOrganizationId && ctx.ownerOrgIds.has(x.linkedOrganizationId)).map((x) => [x.id, x.linkedOrganizationId!]),
+  );
+  const icPos = pos.filter((p) => p.supplierId && siblingOf.has(p.supplierId) && !seen.has(p.id));
+  if (icPos.length === 0) return [];
+  icPos.forEach((p) => seen.add(p.id));
+
+  const orgIds = [...new Set(icPos.map((p) => siblingOf.get(p.supplierId!)!))];
+  const [orgRows, soRows] = await Promise.all([
+    db.select({ id: organization.id, name: organization.name }).from(organization).where(inArray(organization.id, orgIds)),
+    db.select({
+      id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, createdAt: salesOrder.createdAt,
+      organizationId: salesOrder.organizationId, sourcePurchaseOrderId: salesOrder.sourcePurchaseOrderId, customerPoId: salesOrder.customerPoId,
+    }).from(salesOrder).where(inArray(salesOrder.sourcePurchaseOrderId, icPos.map((p) => p.id))),
+  ]);
+  const orgName = new Map(orgRows.map((o) => [o.id, o.name]));
+
+  const legs: IntercompanyLeg[] = [];
+  for (const p of icPos) {
+    const siblingOrgId = siblingOf.get(p.supplierId!)!;
+    const so = soRows.find((r) => r.sourcePurchaseOrderId === p.id && r.organizationId === siblingOrgId) ?? null;
+
+    let siblingPos: { id: string; poNo: string | null; prNo: string | null; status: string; createdAt: Date; supplierId: string | null }[] = [];
+    if (so) {
+      // The sibling's POs for this order — linked through the SO itself, a PR
+      // raised from it, or the auto-created Customer PO behind it.
+      const [prRows, cpoLinkRows] = await Promise.all([
+        db.select({ id: purchaseRequisition.id }).from(purchaseRequisition).where(eq(purchaseRequisition.salesOrderId, so.id)),
+        so.customerPoId
+          ? db.select({ id: purchaseOrderCustomerPo.purchaseOrderId }).from(purchaseOrderCustomerPo).where(eq(purchaseOrderCustomerPo.customerPoId, so.customerPoId))
+          : Promise.resolve([] as { id: string }[]),
+      ]);
+      const links = [eq(purchaseOrder.salesOrderId, so.id)];
+      if (prRows.length > 0) links.push(inArray(purchaseOrder.purchaseRequisitionId, prRows.map((r) => r.id)));
+      if (cpoLinkRows.length > 0) links.push(inArray(purchaseOrder.id, cpoLinkRows.map((r) => r.id)));
+      siblingPos = await db
+        .select({
+          id: purchaseOrder.id, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, status: purchaseOrder.status,
+          createdAt: purchaseOrder.createdAt, supplierId: purchaseOrder.supplierId,
+        })
+        .from(purchaseOrder)
+        .where(and(eq(purchaseOrder.organizationId, siblingOrgId), or(...links)))
+        .orderBy(asc(purchaseOrder.createdAt));
+    }
+
+    legs.push({
+      organizationName: orgName.get(siblingOrgId) ?? "Sibling organization",
+      viaPoNo: p.poNo ?? p.prNo ?? p.id,
+      viaPoStatus: p.status,
+      so: so
+        ? { id: so.id, soNo: so.soNo, status: so.status, createdAt: so.createdAt, href: ctx.canOpenSo ? `/dashboard/sales/order/centralized/${so.id}` : null }
+        : null,
+      pos: siblingPos.map((x) => ({
+        id: x.id, poNo: x.poNo, prNo: x.prNo, status: x.status, createdAt: x.createdAt,
+        href: ctx.canOpenPo ? `/dashboard/procurement/purchase-order/centralized/${x.id}` : null,
+      })),
+      next: await fetchIntercompanyLegs(siblingPos, ctx, depth + 1, seen),
+    });
+  }
+  return legs;
 }
 
 export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTrackingData | null> {
-  const { orgId } = await requireAccess("customer-po:read");
+  const { orgId, userId } = await requireAccess("customer-po:read");
 
   const [cpo] = await db
     .select()
@@ -652,7 +754,7 @@ export async function getCustomerPoForTracking(id: string): Promise<CustomerPoTr
     .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
 
   if (!cpo) return null;
-  return fetchCpoTrackingData(cpo);
+  return fetchCpoTrackingData(cpo, { userId, orgId });
 }
 
 // Same tracking data, but resolvable across every org the caller's owner
@@ -671,11 +773,13 @@ export async function getCustomerPoForTrackingCentralized(
     .where(and(eq(customerPurchaseOrder.id, id), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
 
   if (!row) return null;
-  const data = await fetchCpoTrackingData(row.po);
+  const data = await fetchCpoTrackingData(row.po, { userId, orgId });
   return { ...data, organizationName: row.organizationName, isIntercompany: !!row.linkedOrganizationId };
 }
 
-async function fetchCpoTrackingData(cpo: CustomerPo): Promise<CustomerPoTrackingData> {
+// viewer: the signed-in caller (active org), used to scope the intercompany
+// legs to the owner's own orgs and decide whether they link anywhere.
+async function fetchCpoTrackingData(cpo: CustomerPo, viewer: { userId: string; orgId: string }): Promise<CustomerPoTrackingData> {
   const id = cpo.id;
   const [userRows, soRows, poLinkRows] = await Promise.all([
     db.select({ id: user.id, name: user.name }).from(user).where(eq(user.id, cpo.createdBy)),
@@ -716,12 +820,28 @@ async function fetchCpoTrackingData(cpo: CustomerPo): Promise<CustomerPoTracking
     poLinkRows.length > 0
       ? db.select({
           id: purchaseOrder.id, prNo: purchaseOrder.prNo, poNo: purchaseOrder.poNo, status: purchaseOrder.status,
-          createdAt: purchaseOrder.createdAt, grandTotal: purchaseOrder.grandTotal,
+          createdAt: purchaseOrder.createdAt, grandTotal: purchaseOrder.grandTotal, supplierId: purchaseOrder.supplierId,
         }).from(purchaseOrder)
           .where(inArray(purchaseOrder.id, poLinkRows.map((r) => r.purchaseOrderId)))
           .orderBy(asc(purchaseOrder.createdAt))
       : Promise.resolve([]),
   ]);
+
+  let intercompany: IntercompanyLeg[] = [];
+  // Cancelled POs included: a cancel doesn't reach the sibling's SO, and a
+  // still-open SO behind a cancelled PO is exactly what the trail should show.
+  const outgoing = internalPoRows.filter((p) => p.supplierId);
+  if (outgoing.length > 0) {
+    const [ownerOrgIds, perms] = await Promise.all([
+      getAllOwnerOrgIds(viewer.userId, viewer.orgId),
+      getUserPermissions(viewer.userId, viewer.orgId),
+    ]);
+    intercompany = await fetchIntercompanyLegs(outgoing, {
+      ownerOrgIds: new Set(ownerOrgIds),
+      canOpenSo: hasAccess(perms, "sales-order:read:centralized"),
+      canOpenPo: hasAccess(perms, "purchase-order:read:centralized"),
+    });
+  }
 
   return {
     cpo,
@@ -730,6 +850,7 @@ async function fetchCpoTrackingData(cpo: CustomerPo): Promise<CustomerPoTracking
     internalPos: internalPoRows,
     dos: dosRows,
     invoices: invoiceRows,
+    intercompany,
   };
 }
 

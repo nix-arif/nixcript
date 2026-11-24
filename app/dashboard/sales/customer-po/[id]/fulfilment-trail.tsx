@@ -9,11 +9,11 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeftIcon, CheckIcon, AlertCircleIcon,
   FileTextIcon, PackageIcon, TruckIcon, ReceiptIcon,
-  BanknoteIcon, ExternalLinkIcon, PlusIcon,
+  BanknoteIcon, ExternalLinkIcon, PlusIcon, Link2Icon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { CustomerPoTrackingData } from "@/server/customer-purchase-order";
+import type { CustomerPoTrackingData, IntercompanyLeg } from "@/server/customer-purchase-order";
 
 type Data = CustomerPoTrackingData;
 
@@ -205,6 +205,88 @@ export function trailStates(data: Data) {
   return { prs, spoList, cpoState, soState, prState, spoState, doState, invState, pmt };
 }
 
+// ── Intercompany legs ──────────────────────────────────────────────────────
+// Our PO cancelled while their SO is still open: the cancel never reached them.
+const legOrphaned = (leg: IntercompanyLeg) =>
+  leg.viaPoStatus === "cancelled" && !!leg.so && leg.so.status !== "cancelled" && leg.so.status !== "fulfilled";
+
+function legState(leg: IntercompanyLeg): StepState {
+  if (legOrphaned(leg)) return "warn";
+  if (leg.viaPoStatus === "cancelled") return "pending";
+  if (!leg.so) return "pending";
+  if (leg.so.status === "cancelled") return "warn";
+  return leg.so.status === "fulfilled" ? "done" : "active";
+}
+
+// The sibling org's side of the chain: the SO it got from our PO and the POs
+// it raised from that SO. Numbers and statuses only; links open the
+// centralized pages and only appear when the viewer may use them.
+function IntercompanyLegBody({ leg }: { leg: IntercompanyLeg }) {
+  const router = useRouter();
+  const soCfg = leg.so ? (SO_STATUS[leg.so.status] ?? SO_STATUS.draft) : null;
+  return (
+    <div className="border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-900/10 rounded-lg p-3 space-y-3">
+      <p className="text-[11px] text-muted-foreground">
+        Our PO <span className="font-mono text-foreground">{leg.viaPoNo}</span> was issued to{" "}
+        <span className="font-medium text-foreground">{leg.organizationName}</span>
+        {leg.viaPoStatus === "cancelled" && " (since cancelled)"}
+      </p>
+      {legOrphaned(leg) && (
+        <p className="text-[11px] font-medium text-red-600 dark:text-red-400">
+          Our PO is cancelled, but {leg.organizationName}&apos;s sales order is still open — ask them to cancel it.
+        </p>
+      )}
+
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Their Sales Order</p>
+        {leg.so && soCfg ? (
+          <DocCard
+            docNo={leg.so.soNo}
+            statusLabel={soCfg.label}
+            statusColor={soCfg.color}
+            meta={fmtDate(leg.so.createdAt)}
+            onClick={leg.so.href ? () => router.push(leg.so!.href!) : undefined}
+          />
+        ) : (
+          <PendingCard label={`Waiting for ${leg.organizationName} to raise a sales order`} />
+        )}
+      </div>
+
+      {leg.so && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Their Supplier PO</p>
+          {leg.pos.length === 0 ? (
+            <PendingCard label={`No supplier PO raised yet in ${leg.organizationName}`} />
+          ) : (
+            <div className="space-y-1.5">
+              {leg.pos.map((po) => {
+                const cfg = PO_STATUS[po.status] ?? PO_STATUS.draft;
+                return (
+                  <DocCard
+                    key={po.id}
+                    docNo={po.poNo ?? po.prNo ?? po.id}
+                    statusLabel={cfg.label}
+                    statusColor={cfg.color}
+                    meta={fmtDate(po.createdAt)}
+                    onClick={po.href ? () => router.push(po.href!) : undefined}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {leg.next.map((n, i) => (
+        <div key={`${n.viaPoNo}-${i}`} className="pl-3 border-l-2 border-purple-200 dark:border-purple-800">
+          <p className="text-[10px] font-bold uppercase tracking-widest mb-2">Intercompany · {n.organizationName}</p>
+          <IntercompanyLegBody leg={n} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────
 export function FulfilmentTrailClient({
   data,
@@ -343,6 +425,13 @@ export function FulfilmentTrailClient({
               </div>
             )}
           </TrailStep>
+
+          {/* Step 4b — where a Supplier PO went to a sibling org */}
+          {data.intercompany.map((leg, i) => (
+            <TrailStep key={`${leg.viaPoNo}-${i}`} state={legState(leg)} icon={Link2Icon} label={`Intercompany · ${leg.organizationName}`}>
+              <IntercompanyLegBody leg={leg} />
+            </TrailStep>
+          ))}
 
           {/* Step 4 — Delivery Orders */}
           <TrailStep state={doState} icon={TruckIcon} label="Delivery Orders">
