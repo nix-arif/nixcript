@@ -18,6 +18,7 @@ import {
   CalendarIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LotNumbersExcelButton } from "@/components/lot-numbers-excel-button";
 import {
   searchPurchaseOrdersForTracking,
   getPoForTracking,
@@ -438,6 +439,14 @@ export function ItemTrackingClient() {
               <BuildingIcon className="w-3.5 h-3.5" />{po.organizationName ?? "—"}
             </span>
             <span className="text-xs text-muted-foreground sm:ml-auto">{po.lines.length} line{po.lines.length === 1 ? "" : "s"}</span>
+            <LotNumbersExcelButton
+              size="xs"
+              purchaseOrderId={po.id}
+              purchaseOrderItemIds={lineFilter.trim() ? lines.map((l) => l.id) : undefined}
+              showCompany={false}
+              fileName={`${(po.poNo ?? po.prNo ?? "PO").replace(/[\\/:*?"<>|]/g, "-")} lot numbers${lineFilter.trim() ? " (filtered)" : ""}`}
+              label={lineFilter.trim() ? `Lot Numbers · ${lines.length} line${lines.length === 1 ? "" : "s"}` : "Lot Numbers (Excel)"}
+            />
           </div>
 
           <div className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] items-start">

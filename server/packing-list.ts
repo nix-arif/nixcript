@@ -1173,14 +1173,18 @@ export type LotNumberRow = {
 };
 
 // Every lot issued on completed packing lists — one packing list (packingListId), this company's (default), or
-// every company the owner holds (centralized). Lots still missing on a completed list are issued first (safe to repeat).
-export async function getLotNumberRows(opts: { packingListId?: string; centralized?: boolean } = {}): Promise<LotNumberRow[]> {
+// every company the owner holds (centralized). purchaseOrderId (and optionally its purchaseOrderItemIds) keeps only
+// that PO's lines, across all its packing lists (Item Tracking). Lots still missing on a completed list are issued
+// first (safe to repeat).
+export async function getLotNumberRows(opts: {
+  packingListId?: string; centralized?: boolean; purchaseOrderId?: string; purchaseOrderItemIds?: string[];
+} = {}): Promise<LotNumberRow[]> {
   const { orgId, userId } = await getSession();
   const perms = await getUserPermissions(userId, orgId);
   const canOwn = hasAccess(perms, "purchase-order:read");
   const canCentral = hasAccess(perms, "packing-list:read:centralized") || hasAccess(perms, "purchase-order:read:centralized");
   let orgIds: string[];
-  if (opts.centralized || opts.packingListId) {
+  if (opts.centralized || opts.packingListId || opts.purchaseOrderId) {
     orgIds = canCentral ? await getOwnerOrgIds(orgId) : [];
     if (canOwn && !orgIds.includes(orgId)) orgIds.push(orgId);
     if (opts.centralized && !canCentral) throw new Error("You don't have permission to do this");
@@ -1189,6 +1193,11 @@ export async function getLotNumberRows(opts: { packingListId?: string; centraliz
     orgIds = [orgId];
   }
   if (orgIds.length === 0) throw new Error("You don't have permission to do this");
+  if (opts.purchaseOrderItemIds && opts.purchaseOrderItemIds.length === 0) return [];
+  const poScope = and(
+    opts.purchaseOrderId ? eq(packingListItem.purchaseOrderId, opts.purchaseOrderId) : undefined,
+    opts.purchaseOrderItemIds ? inArray(packingListItem.purchaseOrderItemId, opts.purchaseOrderItemIds) : undefined,
+  );
 
   const lists = await db
     .select({ pl: packingList, company: organization.name })
@@ -1206,7 +1215,7 @@ export async function getLotNumberRows(opts: { packingListId?: string; centraliz
   const missing = await db
     .select({ id: packingListItem.id, packingListId: packingListItem.packingListId, qtyExpected: packingListItem.qtyExpected, draftQtyReceived: packingListItem.draftQtyReceived, draftQtyReturn: packingListItem.draftQtyReturn })
     .from(packingListItem)
-    .where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt), isNull(packingListItem.lotNo)));
+    .where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt), isNull(packingListItem.lotNo), poScope));
   const needLots = new Set(missing.filter((i) => acceptedQty(i as PackingListItemRow) > 0).map((i) => i.packingListId));
   for (const id of needLots) await assignLotNumbers(id).catch((e) => console.error("assignLotNumbers failed:", e));
 
@@ -1215,7 +1224,7 @@ export async function getLotNumberRows(opts: { packingListId?: string; centraliz
     .from(packingListItem)
     .leftJoin(purchaseOrder, eq(purchaseOrder.id, packingListItem.purchaseOrderId))
     .leftJoin(purchaseOrderItem, eq(purchaseOrderItem.id, packingListItem.purchaseOrderItemId))
-    .where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt), sql`${packingListItem.lotNo} is not null`));
+    .where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt), sql`${packingListItem.lotNo} is not null`, poScope));
 
   const byId = new Map(lists.map((l) => [l.pl.id, l]));
   const num = (v: string | null | undefined) => parseFloat(v ?? "") || 0;
