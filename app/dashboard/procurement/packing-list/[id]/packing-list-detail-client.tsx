@@ -18,6 +18,7 @@ import {
   ChevronDownIcon, FileTextIcon, FileSpreadsheetIcon, DownloadIcon, RotateCcwIcon, LoaderIcon, PrinterIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LotNumbersExcelButton } from "@/components/lot-numbers-excel-button";
 import { PoBadge } from "@/components/po-badge";
 import { comparePoNo } from "@/lib/po-sort";
 import { LineIssueChips } from "@/components/line-issue-chips";
@@ -384,6 +385,9 @@ export function PackingListDetailClient({
             <Button size="sm" variant="outline" className="gap-1.5" disabled={downloadingPdf} onClick={handleDownloadPdf}>
               <DownloadIcon className="w-3.5 h-3.5" /> {downloadingPdf ? "Generating…" : "Download PDF"}
             </Button>
+            {pl.status === "completed" && (
+              <LotNumbersExcelButton packingListId={pl.id} fileName={`${pl.packingListNo.replace(/[\\/:*?"<>|]/g, "-")} lot numbers`} />
+            )}
             {can("label:read") && (
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => router.push(`/dashboard/procurement/packing-list/${pl.id}/labels`)}>
                 <PrinterIcon className="w-3.5 h-3.5" /> Labels

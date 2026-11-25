@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import { PlusIcon, SearchIcon, XIcon, ClipboardCheckIcon, BuildingIcon, CalendarIcon, PackageIcon, AlertCircleIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LotNumbersExcelButton } from "@/components/lot-numbers-excel-button";
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -80,11 +81,14 @@ export function PackingListListClient({ initialLists, pendingPos, permissions }:
         title="Packing Lists"
         description="Pre-receipt manifests of what a supplier says they're shipping — inspect once goods arrive"
         action={
-          can("packing-list:create") && (
-            <Button onClick={() => router.push("/dashboard/procurement/packing-list/create")} className="gap-2">
-              <PlusIcon className="w-4 h-4" /> New Packing List
-            </Button>
-          )
+          <div className="flex items-center gap-2">
+            <LotNumbersExcelButton fileName="Lot numbers" label="Lot Numbers (Excel)" />
+            {can("packing-list:create") && (
+              <Button onClick={() => router.push("/dashboard/procurement/packing-list/create")} className="gap-2">
+                <PlusIcon className="w-4 h-4" /> New Packing List
+              </Button>
+            )}
+          </div>
         }
       />
 

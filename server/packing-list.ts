@@ -1146,6 +1146,111 @@ async function assignLotNumbers(packingListId: string): Promise<{ assigned: numb
   return { assigned: lots.size, problem };
 }
 
+// ── Lot number export (the "Lot Numbers" Excel on the packing list pages) ──
+export type LotNumberRow = {
+  lotNo: string;
+  company: string;
+  packingListId: string;
+  packingListNo: string;
+  supplierRefNo: string | null;
+  plDate: Date;
+  supplier: string;
+  poNo: string;
+  poLine: number | null;
+  productCode: string;
+  description: string;
+  designBrandName: string;
+  designBrandCode: string;
+  privateLabelCode: string;
+  uom: string;
+  qtyExpected: number;
+  qtyReceived: number;
+  qtyRejected: number;
+  qtyAccepted: number;
+  customerName: string;
+  customerOrganization: string;
+  customerPoNo: string;
+};
+
+// Every lot issued on completed packing lists — one packing list (packingListId), this company's (default), or
+// every company the owner holds (centralized). Lots still missing on a completed list are issued first (safe to repeat).
+export async function getLotNumberRows(opts: { packingListId?: string; centralized?: boolean } = {}): Promise<LotNumberRow[]> {
+  const { orgId, userId } = await getSession();
+  const perms = await getUserPermissions(userId, orgId);
+  const canOwn = hasAccess(perms, "purchase-order:read");
+  const canCentral = hasAccess(perms, "packing-list:read:centralized") || hasAccess(perms, "purchase-order:read:centralized");
+  let orgIds: string[];
+  if (opts.centralized || opts.packingListId) {
+    orgIds = canCentral ? await getOwnerOrgIds(orgId) : [];
+    if (canOwn && !orgIds.includes(orgId)) orgIds.push(orgId);
+    if (opts.centralized && !canCentral) throw new Error("You don't have permission to do this");
+  } else {
+    if (!canOwn) throw new Error("You don't have permission to do this");
+    orgIds = [orgId];
+  }
+  if (orgIds.length === 0) throw new Error("You don't have permission to do this");
+
+  const lists = await db
+    .select({ pl: packingList, company: organization.name })
+    .from(packingList)
+    .innerJoin(organization, eq(organization.id, packingList.organizationId))
+    .where(and(
+      inArray(packingList.organizationId, orgIds),
+      eq(packingList.status, "completed"),
+      opts.packingListId ? eq(packingList.id, opts.packingListId) : undefined,
+    ));
+  if (lists.length === 0) return [];
+  const listIds = lists.map((l) => l.pl.id);
+
+  // issue any lot still missing (only lists that have an accepted line without one)
+  const missing = await db
+    .select({ id: packingListItem.id, packingListId: packingListItem.packingListId, qtyExpected: packingListItem.qtyExpected, draftQtyReceived: packingListItem.draftQtyReceived, draftQtyReturn: packingListItem.draftQtyReturn })
+    .from(packingListItem)
+    .where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt), isNull(packingListItem.lotNo)));
+  const needLots = new Set(missing.filter((i) => acceptedQty(i as PackingListItemRow) > 0).map((i) => i.packingListId));
+  for (const id of needLots) await assignLotNumbers(id).catch((e) => console.error("assignLotNumbers failed:", e));
+
+  const items = await db
+    .select({ item: packingListItem, poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, poLine: purchaseOrderItem.rowNo })
+    .from(packingListItem)
+    .leftJoin(purchaseOrder, eq(purchaseOrder.id, packingListItem.purchaseOrderId))
+    .leftJoin(purchaseOrderItem, eq(purchaseOrderItem.id, packingListItem.purchaseOrderItemId))
+    .where(and(inArray(packingListItem.packingListId, listIds), isNull(packingListItem.removedAt), sql`${packingListItem.lotNo} is not null`));
+
+  const byId = new Map(lists.map((l) => [l.pl.id, l]));
+  const num = (v: string | null | undefined) => parseFloat(v ?? "") || 0;
+  const rows: LotNumberRow[] = items.map(({ item: i, poNo, prNo, poLine }) => {
+    const l = byId.get(i.packingListId)!;
+    const received = num(i.draftQtyReceived ?? i.qtyExpected);
+    const rejected = num(i.draftQtyReturn);
+    return {
+      lotNo: i.lotNo!,
+      company: l.company,
+      packingListId: l.pl.id,
+      packingListNo: l.pl.packingListNo,
+      supplierRefNo: l.pl.supplierRefNo,
+      plDate: l.pl.createdAt,
+      supplier: l.pl.supplierSnapshot?.name ?? "",
+      poNo: poNo ?? prNo ?? "",
+      poLine: poLine ?? null,
+      productCode: i.productCode ?? "",
+      description: i.description ?? "",
+      designBrandName: i.designBrandName ?? "",
+      designBrandCode: i.designBrandCode ?? "",
+      privateLabelCode: i.privateLabelCode ?? "",
+      uom: i.uom ?? "",
+      qtyExpected: num(i.qtyExpected),
+      qtyReceived: received,
+      qtyRejected: rejected,
+      qtyAccepted: Math.max(0, received - rejected),
+      customerName: i.customerName ?? "",
+      customerOrganization: i.customerOrganization ?? "",
+      customerPoNo: i.customerPoNo ?? "",
+    };
+  });
+  return rows.sort((a, b) => a.company.localeCompare(b.company) || +b.plDate - +a.plDate || a.packingListNo.localeCompare(b.packingListNo) || comparePoNo(a.poNo, b.poNo) || (a.poLine ?? 0) - (b.poLine ?? 0));
+}
+
 export type PackingListLabel = {
   itemId: string;
   no: number; // the line number shown on the packing list page

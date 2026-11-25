@@ -13,6 +13,7 @@ import {
   PackageIcon, RefreshCwIcon, LayersIcon, EyeIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LotNumbersExcelButton } from "@/components/lot-numbers-excel-button";
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -113,10 +114,13 @@ export function CentralizedPackingListClient({ initialLists }: Props) {
         title="Centralized Packing Lists"
         description="Every packing list recorded across all organizations under the same owner"
         action={
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleRefresh} disabled={refreshing}>
-            <RefreshCwIcon className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <LotNumbersExcelButton centralized fileName="Lot numbers (all companies)" label="Lot Numbers (Excel)" />
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleRefresh} disabled={refreshing}>
+              <RefreshCwIcon className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
