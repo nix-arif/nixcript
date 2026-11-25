@@ -1044,6 +1044,8 @@ export async function getPackingListDetail(id: string): Promise<PackingListWithI
     .from(packingList)
     .where(and(eq(packingList.id, id), eq(packingList.organizationId, orgId)));
   if (!pl) return null;
+  // a completed list shows every accepted line's lot — issue any still missing first (safe to repeat)
+  if (pl.status === "completed") await assignLotNumbers(id).catch((e) => console.error("assignLotNumbers failed:", e));
 
   const [items, userRows, grs] = await Promise.all([
     db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo)),
@@ -1385,6 +1387,8 @@ export async function getPackingListDetailCentralized(id: string): Promise<Centr
     .where(and(eq(packingList.id, id), inArray(packingList.organizationId, ownerOrgIds)));
   if (!row) return null;
   const { pl, organizationName, businessType } = row;
+  // a completed list shows every accepted line's lot — issue any still missing first (safe to repeat)
+  if (pl.status === "completed") await assignLotNumbers(id).catch((e) => console.error("assignLotNumbers failed:", e));
 
   const [items, userRows, grs] = await Promise.all([
     db.select().from(packingListItem).where(eq(packingListItem.packingListId, id)).orderBy(asc(packingListItem.rowNo)),

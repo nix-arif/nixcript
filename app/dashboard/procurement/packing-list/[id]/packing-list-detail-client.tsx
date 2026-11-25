@@ -593,9 +593,19 @@ export function PackingListDetailClient({
                                   {item.sourcingType === "oem" ? "OEM" : "Trading"}
                                 </span>
                               )}
-                              {item.lotNo && (
-                                <span className="font-mono text-[10px] text-muted-foreground" title="Lot number of this line. Each piece's sticker adds -001, -002 … after it.">{item.lotNo}</span>
-                              )}
+                              {item.lotNo ? (
+                                <span
+                                  className="inline-flex w-fit items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                  title="Lot number of this line's accepted units. Each piece's sticker adds -001, -002 … after it."
+                                >
+                                  <span className="font-sans font-semibold">Lot</span> {item.lotNo}
+                                </span>
+                              ) : pl.status === "completed" && !item.removedAt ? (
+                                // only lines with accepted units get a lot (it goes on the stock's sticker)
+                                <span className="text-[10px] italic text-muted-foreground" title="A lot is given only to accepted units — nothing on this line was accepted (not received, or all rejected).">
+                                  No lot · nothing accepted
+                                </span>
+                              ) : null}
                               {showSourcing && item.sourcingType === "oem" && (
                                 item.privateLabelCode?.trim() && item.privateLabelCode !== item.productCode ? (
                                   <div className="flex flex-col gap-0.5">
