@@ -3,9 +3,11 @@
 import { SoStockChip } from "@/components/so-stock-chip";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { SoReferenceDocs } from "@/components/sales-order/reference-docs";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
-import * as XLSX from "xlsx";
+import { exportSalesOrderExcel } from "@/lib/sales-order/export-excel";
 import {
   deleteSalesOrder,
   submitSalesOrder,
@@ -38,6 +40,20 @@ import { sameText } from "@/lib/sales-order/db-description";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+
+// A quotation / customer PO number as a small clickable tag — in the Details
+// rows that list a value per document, so you can tell which is which and open it.
+function DocTag({ href, no, kind }: { href: string; no: string; kind: string }) {
+  return (
+    <Link
+      href={href}
+      title={`Open ${kind} ${no}`}
+      className="shrink-0 cursor-pointer rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 font-mono text-[10px] text-blue-700 hover:border-blue-400 hover:underline dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-400"
+    >
+      {no}
+    </Link>
+  );
+}
 
 const fmtDate = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -157,6 +173,10 @@ export function SalesOrderDetailClient({
   const resolvedEditHref = editHref ?? `/dashboard/sales/order/${order.id}/edit`;
 
   const snap = order.customerSnapshot as any;
+  // Links to the quotation / customer PO pages (the centralized CPO page when this
+  // is the centralized view — organizationName is only passed there)
+  const qtHref = (id: string) => `/dashboard/sales/quotation/${id}`;
+  const cpoHref = (id: string) => (organizationName ? `/dashboard/sales/customer-po/centralized/${id}` : `/dashboard/sales/customer-po/${id}`);
   const custName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : null;
 
   // Build deduplicated customer entries from CPO links, fall back to SO snapshot
@@ -331,56 +351,7 @@ export function SalesOrderDetailClient({
   }
 
   function handleExportExcel() {
-    const rows: (string | number)[][] = [];
-
-    rows.push([`Sales Order ${order.soNo}`]);
-    rows.push([`Status: ${SO_STATUS[status]?.label ?? status}`, `Date: ${fmtDate(order.createdAt)}`]);
-    rows.push([]);
-    rows.push(["Customer", custName || "—", "Organization", snap?.organizationName || "—"]);
-    rows.push(["Sales Person", order.salesPersonName || "—", "Due Delivery Date", fmtDate(order.deliveryDate)]);
-    if (order.deliveryAddress) rows.push(["Delivery Address", order.deliveryAddress]);
-    rows.push([]);
-
-    const header = ["#", "Code"];
-    if (showSourcing) header.push("Design Brand", "Design Code", "Emboss Code");
-    header.push("Description", "Qty", "UOM", "Unit Price", "Disc %", "Total");
-    const colCount = header.length;
-    rows.push(header);
-
-    for (const item of order.items) {
-      const row: (string | number)[] = [item.rowNo, item.productCode ?? ""];
-      if (showSourcing) row.push(item.designBrandName ?? "", item.designBrandCode ?? "", item.privateLabelCode ?? "");
-      row.push(
-        item.description ?? "",
-        Number(item.qty ?? 0),
-        item.uom ?? "",
-        Number(item.unitPrice ?? 0),
-        Number(item.discountPct ?? 0),
-        Number(item.totalPrice ?? 0),
-      );
-      rows.push(row);
-    }
-
-    rows.push([]);
-    const footer = (label: string, value: number) => {
-      const r: (string | number)[] = new Array(colCount - 2).fill("");
-      r.push(label, value);
-      return r;
-    };
-    rows.push(footer("Subtotal", Number(order.subtotal ?? 0)));
-    if (parseFloat(order.overallDiscountPct ?? "0") > 0) {
-      rows.push(footer(`Discount (${order.overallDiscountPct}%)`, -Number(order.overallDiscountAmt ?? 0)));
-    }
-    if (parseFloat(order.sstPct ?? "0") > 0) {
-      rows.push(footer(`SST (${order.sstPct}%)`, Number(order.sst ?? 0)));
-    }
-    rows.push(footer("Grand Total", Number(order.grandTotal ?? 0)));
-
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = header.map(() => ({ wch: 16 }));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sales Order");
-    XLSX.writeFile(wb, `${order.soNo}.xlsx`);
+    exportSalesOrderExcel(order, { statusLabel: SO_STATUS[status]?.label ?? status, showSourcing });
   }
 
   return (
@@ -1465,37 +1436,22 @@ export function SalesOrderDetailClient({
               </div>
             )}
 
-            {linkedQuotations.length > 0 && (
-              <div className="flex items-start gap-2">
-                <FileTextIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-[10px] text-muted-foreground mb-1">
-                    Quotation{linkedQuotations.length > 1 ? "s" : ""}
-                  </p>
-                  <div className="space-y-1">
-                    {linkedQuotations.map((q) => (
-                      <button
-                        key={q.id}
-                        onClick={() => router.push(`/dashboard/sales/quotation/${q.id}`)}
-                        className="w-full text-left border border-border rounded-lg px-2.5 py-2 hover:bg-muted/40 transition-colors"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-mono font-medium">{q.quotationNo}</span>
-                          {q.status && (
-                            <span className={cn("text-[10px] font-medium rounded px-1.5 py-0.5", (QT_STATUS[q.status] ?? QT_STATUS.draft).className)}>
-                              {(QT_STATUS[q.status] ?? QT_STATUS.draft).label}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
-                          {fmt(q.grandTotal)}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* The quotation(s) and customer PO(s) it's built from — standing out, each a link */}
+            <SoReferenceDocs
+              quotations={linkedQuotations.map((q) => ({
+                id: q.id,
+                no: q.quotationNo,
+                badge: q.status ? (QT_STATUS[q.status] ?? QT_STATUS.draft) : null,
+                total: fmt(q.grandTotal),
+              }))}
+              cpos={order.cpoCustomers.map((c) => ({
+                id: c.customerPoId,
+                no: c.customerPoNo,
+                customerName: c.customerSnapshot ? [c.customerSnapshot.title, c.customerSnapshot.name].filter(Boolean).join(" ") : null,
+              }))}
+              cpoHref={cpoHref}
+            />
+
             {/* Sales person — per-quotation for urgent SO (no CPOs yet), per-CPO when CPOs linked, else SO-level */}
             {(() => {
               const associates = (order.associateSalesPersons as { id: string; name: string }[] | null) ?? [];
@@ -1527,9 +1483,7 @@ export function SalesOrderDetailClient({
                             if (!effectiveSp && externalPersons.length === 0) return null;
                             return (
                               <div key={qt.id} className="flex flex-wrap items-center gap-1">
-                                <span className="text-[10px] font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 rounded px-1.5 py-0.5 shrink-0">
-                                  {qt.quotationNo}
-                                </span>
+                                {rows.length > 1 && <DocTag href={qtHref(qt.id)} no={qt.quotationNo} kind="quotation" />}
                                 {effectiveSp && <span className="text-xs">{effectiveSp}</span>}
                                 {externalPersons.map((e) => (
                                   <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
@@ -1565,9 +1519,7 @@ export function SalesOrderDetailClient({
                           if (!c.effectiveSp && c.externalPersons.length === 0) return null;
                           return (
                             <div key={c.customerPoId} className="flex flex-wrap items-center gap-1">
-                              <span className="text-[10px] font-mono bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 rounded px-1.5 py-0.5 shrink-0">
-                                {c.customerPoNo}
-                              </span>
+                              {rows.length > 1 && <DocTag href={cpoHref(c.customerPoId)} no={c.customerPoNo} kind="customer PO" />}
                               {c.effectiveSp && <span className="text-xs">{c.effectiveSp}</span>}
                               {c.externalPersons.map((e) => (
                                 <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
@@ -1626,7 +1578,7 @@ export function SalesOrderDetailClient({
                         <div className="space-y-1">
                           {rows.map(({ qt, deliveryDate }) => (
                             <div key={qt.id} className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-mono text-blue-700 dark:text-blue-400 shrink-0">{qt.quotationNo}</span>
+                              {rows.length > 1 && <DocTag href={qtHref(qt.id)} no={qt.quotationNo} kind="quotation" />}
                               <span className="text-xs">
                                 {deliveryDate ? fmtDate(deliveryDate) : order.deliveryDate ? fmtDate(order.deliveryDate) : <span className="text-muted-foreground">—</span>}
                               </span>
@@ -1646,7 +1598,7 @@ export function SalesOrderDetailClient({
                     <div className="space-y-1">
                       {order.cpoCustomers.map((c) => (
                         <div key={c.customerPoId} className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0">{c.customerPoNo}</span>
+                          {order.cpoCustomers.length > 1 && <DocTag href={cpoHref(c.customerPoId)} no={c.customerPoNo} kind="customer PO" />}
                           <span className="text-xs">
                             {c.deliveryDate ? fmtDate(c.deliveryDate) : <span className="text-muted-foreground">—</span>}
                           </span>
@@ -1692,7 +1644,7 @@ export function SalesOrderDetailClient({
                         <div className="space-y-1.5">
                           {rows.map(({ qt, orgName, address }) => (
                             <div key={qt.id} className="flex items-start gap-1.5">
-                              <span className="text-[10px] font-mono text-blue-700 dark:text-blue-400 shrink-0 pt-0.5">{qt.quotationNo}</span>
+                              {rows.length > 1 && <DocTag href={qtHref(qt.id)} no={qt.quotationNo} kind="quotation" />}
                               <span className="text-xs leading-snug">
                                 {address ? (
                                   <>
@@ -1717,7 +1669,7 @@ export function SalesOrderDetailClient({
                     <div className="space-y-1.5">
                       {order.cpoCustomers.map((c) => (
                         <div key={c.customerPoId} className="flex items-start gap-1.5">
-                          <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 shrink-0 pt-0.5">{c.customerPoNo}</span>
+                          {order.cpoCustomers.length > 1 && <DocTag href={cpoHref(c.customerPoId)} no={c.customerPoNo} kind="customer PO" />}
                           <span className="text-xs leading-snug">
                             {c.customerSnapshot?.organizationAddress ? (
                               <>

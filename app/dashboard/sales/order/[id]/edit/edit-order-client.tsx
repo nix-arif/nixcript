@@ -1,12 +1,13 @@
 "use client";
 
-import { navigateBack } from "@/hooks/use-back";
+import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DraftSavedNote } from "@/components/draft-saved-note";
 import { toast } from "sonner";
 import {
   updateSalesOrder,
+  deleteSalesOrder,
   type SalesOrderItemInput,
   type SalesOrderWithItems,
 } from "@/server/sales-order";
@@ -42,7 +43,12 @@ import {
   GripVerticalIcon,
   ChevronDownIcon,
   AlertTriangleIcon,
+  FileSpreadsheetIcon,
 } from "lucide-react";
+import { SoStockChip } from "@/components/so-stock-chip";
+import { SoReferenceDocs } from "@/components/sales-order/reference-docs";
+import Link from "next/link";
+import { exportSalesOrderExcel } from "@/lib/sales-order/export-excel";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
@@ -91,6 +97,9 @@ interface LineItem extends SalesOrderItemInput {
 
 const SO_STATUS_MAP: Record<string, { label: string; className: string }> = {
   draft:     { label: "Draft",             className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400" },
+  // created but not submitted (shown with a "Draft" tag) — same as the SO page
+  "pending-do": { label: "Pending DO",     className: "bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-400" },
+  "pending-pr": { label: "Pending PR",     className: "bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400" },
   submitted: { label: "Awaiting Approval", className: "bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400" },
   confirmed: { label: "Confirmed",         className: "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400" },
   fulfilled: { label: "Fulfilled",         className: "bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400" },
@@ -281,11 +290,23 @@ interface Props {
   updateFn?: typeof updateSalesOrder;
   detailHref?: string;
   businessType?: string;
+  // Delete is offered (same rules as the SO page: the creator, sales-order:delete,
+  // nothing raised from it) — worked out by the page; off on the centralized edit
+  // page, whose SO may belong to another company.
+  canDelete?: boolean;
 }
 
-export function EditSalesOrderClient({ order, members, currentUserName, openCpos = [], updateFn = updateSalesOrder, detailHref, businessType = "trading" }: Props) {
+export function EditSalesOrderClient({ order, members, currentUserName, openCpos = [], updateFn = updateSalesOrder, detailHref, businessType = "trading", canDelete = false }: Props) {
   const router = useRouter();
   const backHref = detailHref ?? `/dashboard/sales/order/${order.id}`;
+  // CPO pages: the centralized one when editing from the centralized view (detailHref is only set there).
+  // Links on this page open in a new tab, so following one never loses unsaved edits.
+  const cpoHref = (id: string) => (detailHref ? `/dashboard/sales/customer-po/centralized/${id}` : `/dashboard/sales/customer-po/${id}`);
+  const cpoLink = (id: string, no: string, className: string) => (
+    <Link href={cpoHref(id)} target="_blank" rel="noopener noreferrer" title={`Open customer PO ${no} (new tab)`} onClick={(e) => e.stopPropagation()} className={`${className} cursor-pointer hover:underline`}>
+      {no}
+    </Link>
+  );
   const showSourcing = businessType !== "trading";
   const snap = order.customerSnapshot as any;
 
@@ -922,23 +943,67 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       })()
     : [];
 
+  // Delete — same as on the SO page: on success, back past this SO's pages
+  // (its detail page and this edit page) to wherever the user came from.
+  const [deleting, setDeleting] = useState(false);
+  async function handleDelete() {
+    if (!confirm(`Delete ${order.soNo}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      const res = await deleteSalesOrder(order.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        setDeleting(false);
+        return;
+      }
+      toast.success("Sales order deleted");
+      navigateBackAfterDelete(router, "/dashboard/sales/order", window.location.pathname.replace(/\/edit\/?$/, ""));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't delete the sales order");
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="p-6">
       <PageHeader
         title={order.soNo}
         description="Edit sales order"
         action={
+          // Same order as the SO page's header: Back · Excel · status · Draft tag · Delete
           <div className="flex items-center gap-2">
-            <StatusBadge status={status} />
-            <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-1.5">
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
+            {/* the saved order, as on the SO page */}
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportSalesOrderExcel(order, { statusLabel: SO_STATUS_MAP[status]?.label ?? status, showSourcing })}>
+              <FileSpreadsheetIcon className="w-3.5 h-3.5" /> Excel
+            </Button>
+            <StatusBadge status={status} />
+            <SoStockChip status={status} stockReservationStatus={order.stockReservationStatus} />
+            {canDelete && (
+              <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting || saving}>
+                <TrashIcon className="w-3.5 h-3.5" /> {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            )}
           </div>
         }
       />
 
       <div className="space-y-6">
         <DraftSavedNote docNo={order.soNo} savedAt={savedAt} />
+
+        {/* The quotation(s) and customer PO(s) this SO is built from — the CPOs as currently linked in the form */}
+        <SoReferenceDocs
+          quotations={((order.linkedQuotations as { id: string; quotationNo: string }[] | null) ?? []).map((q) => ({ id: q.id, no: q.quotationNo }))}
+          cpos={linkedCpos.map((c) => ({
+            id: c.id,
+            no: c.customerPoNo,
+            customerName: c.customerSnapshot ? [c.customerSnapshot.title, c.customerSnapshot.name].filter(Boolean).join(" ") : null,
+          }))}
+          cpoHref={cpoHref}
+          newTab
+        />
 
         {/* ── Urgent authorization ── */}
         {isUrgent && (
@@ -1029,7 +1094,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                 return (
                   <span key={c.id} className="flex items-start gap-1.5 bg-muted border border-border/60 rounded-md px-2 py-1 text-xs font-mono leading-5 max-w-xs">
                     <span className="flex-1 min-w-0">
-                      <span className="font-semibold">{c.customerPoNo}</span>
+                      {cpoLink(c.id, c.customerPoNo, "font-semibold text-primary")}
                       {custName && <span className="text-[10px] text-muted-foreground font-sans ml-1.5 hidden sm:inline">{custName}</span>}
                       {(dateStr || addrStr) && (
                         <span className="flex flex-col gap-0 mt-0.5 font-sans">
@@ -1143,9 +1208,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       <span className="font-medium text-sm">{name}</span>
                       <div className="flex items-center gap-1 flex-wrap">
                         {cposForThisCustomer.map((c) => (
-                          <span key={c.id} className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
-                            {c.customerPoNo}
-                          </span>
+                          <span key={c.id}>{cpoLink(c.id, c.customerPoNo, "text-[10px] text-primary font-mono bg-muted px-1.5 py-0.5 rounded")}</span>
                         ))}
                       </div>
                     </div>
@@ -1356,7 +1419,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     return (
                       <tr key={cpo.id}>
                         <td className="py-2 pr-3 align-top">
-                          <span className="font-mono text-[11px] font-semibold">{cpo.customerPoNo}</span>
+                          {cpoLink(cpo.id, cpo.customerPoNo, "font-mono text-[11px] font-semibold text-primary")}
                         </td>
                         <td className="py-2 pr-3 align-top">
                           <div className="space-y-1">
@@ -1622,9 +1685,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           <td colSpan={colCount} className={rowIdx === 0 ? "pb-1" : "pt-4 pb-1"}>
                             <div className={`flex items-center gap-2 ${rowIdx > 0 ? "border-t border-border/60 pt-2" : ""}`}>
                               {matchingCpo ? (
-                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`}>
-                                  {matchingCpo.customerPoNo}
-                                </span>
+                                cpoLink(matchingCpo.id, matchingCpo.customerPoNo, `text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`)
                               ) : (
                                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800">{isUrgent ? "CPO To Follow" : "Pro-forma"}</span>
                               )}
@@ -1647,9 +1708,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           <div className={`flex items-center gap-2 ${rowIdx > 0 ? "border-t border-border/60 pt-2" : ""}`}>
                             {cpo ? (
                               <>
-                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`}>
-                                  {cpo.customerPoNo}
-                                </span>
+                                {cpoLink(cpo.id, cpo.customerPoNo, `text-[10px] font-semibold px-2 py-0.5 rounded-md font-mono ${color?.text ?? "text-muted-foreground"} ${color?.hdr ?? "bg-muted/50"} border border-current/20`)}
                                 {cpoCustomer && <span className="text-[10px] text-muted-foreground">{cpoCustomer}</span>}
                                 {cpoCustomerOrg && <span className="text-[10px] text-muted-foreground">{cpoCustomerOrg}</span>}
                               </>
