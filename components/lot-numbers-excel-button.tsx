@@ -5,14 +5,15 @@ import { toast } from "sonner";
 import { FileSpreadsheetIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getLotNumberRows } from "@/server/packing-list";
-import { exportLotNumbersExcel } from "@/lib/packing-list/export-lots-excel";
+import { exportLotNumbersExcel, exportLotNumbersByLineExcel } from "@/lib/packing-list/export-lots-excel";
 
 // Downloads the lot numbers of completed packing lists as Excel: one packing list (packingListId), this company's,
 // or every company the owner holds (centralized).
 export function LotNumbersExcelButton({
   packingListId, centralized = false, purchaseOrderId, purchaseOrderItemIds, fileName, showCompany = centralized, label = "Lot Numbers",
-  size = "sm",
+  size = "sm", layout = "by-lot",
 }: {
+  layout?: "by-lot" | "by-line"; // by-line: one row per PO line, its lots stacked in one cell (Item Tracking)
   packingListId?: string;
   purchaseOrderId?: string;
   purchaseOrderItemIds?: string[]; // only these PO lines (e.g. the lines left after filtering)
@@ -36,7 +37,8 @@ export function LotNumbersExcelButton({
         );
         return;
       }
-      exportLotNumbersExcel(rows, { fileName, showCompany });
+      if (layout === "by-line") await exportLotNumbersByLineExcel(rows, { fileName });
+      else exportLotNumbersExcel(rows, { fileName, showCompany });
       toast.success(`${rows.length} lot${rows.length === 1 ? "" : "s"} downloaded`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't download the lot numbers");

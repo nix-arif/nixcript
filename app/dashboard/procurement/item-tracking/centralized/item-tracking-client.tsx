@@ -441,6 +441,7 @@ export function ItemTrackingClient() {
             <span className="text-xs text-muted-foreground sm:ml-auto">{po.lines.length} line{po.lines.length === 1 ? "" : "s"}</span>
             <LotNumbersExcelButton
               size="xs"
+              layout="by-line"
               purchaseOrderId={po.id}
               purchaseOrderItemIds={lineFilter.trim() ? lines.map((l) => l.id) : undefined}
               showCompany={false}

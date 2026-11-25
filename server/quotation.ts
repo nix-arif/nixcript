@@ -1529,11 +1529,27 @@ export async function getQuotationGroupAllDetails(id: string) {
     .where(inArray(organization.id, orgIds));
 
   // 4. All items in one query
-  const allItems = await db
+  const allItemRows = await db
     .select()
     .from(quotationItem)
     .where(inArray(quotationItem.quotationId, quotationIds))
     .orderBy(asc(quotationItem.sortOrder));
+
+  // 4b. Each item's MDA registration (from its product: by id, else by code in the quotation's company) — for the Excel
+  const qOrg = new Map(allQuotations.map((q) => [q.id, q.organizationId]));
+  const prodIds = [...new Set(allItemRows.map((i) => i.productId).filter(Boolean) as string[])];
+  const prodCodes = [...new Set(allItemRows.filter((i) => !i.productId && i.productCode).map((i) => i.productCode!))];
+  const mdaCols = { id: product.id, organizationId: product.organizationId, productCode: product.productCode, mdaRegistrationNo: product.mdaRegistrationNo, mdaExpiredOn: product.mdaExpiredOn };
+  const [mdaById, mdaByCode] = await Promise.all([
+    prodIds.length ? db.select(mdaCols).from(product).where(inArray(product.id, prodIds)) : Promise.resolve([]),
+    prodCodes.length ? db.select(mdaCols).from(product).where(and(inArray(product.productCode, prodCodes), inArray(product.organizationId, orgIds))) : Promise.resolve([]),
+  ]);
+  const allItems = allItemRows.map((i) => {
+    const p = i.productId
+      ? mdaById.find((r) => r.id === i.productId)
+      : mdaByCode.find((r) => r.productCode === i.productCode && r.organizationId === qOrg.get(i.quotationId));
+    return { ...i, mdaRegistrationNo: p?.mdaRegistrationNo ?? null, mdaExpiredOn: p?.mdaExpiredOn ?? null };
+  });
 
   // 5. Customer data (shared across group)
   const customerId = anchor.customerId;

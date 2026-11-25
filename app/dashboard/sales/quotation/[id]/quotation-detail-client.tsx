@@ -353,7 +353,9 @@ export function QuotationDetailClient({ group, initialId }: Props) {
   // price/unit and price are the line's own. Items of a set priced as a whole
   // have no price of their own (the set total sits on the set's first item).
   function handleExportExcel() {
-    const rows: (string | number)[][] = [["Product Code", "Description", "Qty", "UOM", "Price/Unit", "Price"]];
+    const rows: (string | number)[][] = [["Product Code", "Description", "Qty", "UOM", "Price/Unit", "Price", "MDA Reg No", "MDA Expiry Date"]];
+    const mdaDate = (d: string | null | undefined) =>
+      d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "";
     for (const item of items) {
       const setPriced = isSetPriced(item);
       const totalQty = Number(item.qty ?? 1) * Number(item.setQty || 1) * sets;
@@ -365,6 +367,8 @@ export function QuotationDetailClient({ group, initialId }: Props) {
         item.uom ?? "",
         setPriced ? "" : Number(item.unitPrice ?? 0),
         setPriced ? (lineTotal > 0 ? lineTotal : "") : lineTotal,
+        item.mdaRegistrationNo ?? "",
+        mdaDate(item.mdaExpiredOn),
       ]);
     }
     rows.push([]);
@@ -375,7 +379,7 @@ export function QuotationDetailClient({ group, initialId }: Props) {
     footer("Grand Total", grandTotal);
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 18 }, { wch: 60 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 14 }];
+    ws["!cols"] = [{ wch: 18 }, { wch: 60 }, { wch: 8 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 24 }, { wch: 16 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Quotation");
     XLSX.writeFile(wb, `${q.quotationNo}.xlsx`);

@@ -4,7 +4,7 @@
 // Browser only (saves a file).
 import * as XLSX from "xlsx";
 import type { LotNumberRow } from "@/server/packing-list";
-import { lotWithPiece } from "@/lib/lot-no";
+import { lotWithPiece, pieceNo } from "@/lib/lot-no";
 
 const fmtDate = (d: Date | string) =>
   new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
@@ -47,4 +47,78 @@ export function exportLotNumbersExcel(rows: LotNumberRow[], opts: { fileName: st
   XLSX.utils.book_append_sheet(wb, sheet(lotHeader, lotRows, widths), "Lots");
   XLSX.utils.book_append_sheet(wb, sheet(stickerHeader, stickerRows, widths), "Stickers");
   XLSX.writeFile(wb, opts.fileName.endsWith(".xlsx") ? opts.fileName : `${opts.fileName}.xlsx`);
+}
+
+// Item Tracking layout: one row per PO line, with all its lots (newest packing list first) stacked in one cell and the
+// sticker range of each lot ("02-260010-066-01-001 → 002"); quantities are the totals across those lots.
+export async function exportLotNumbersByLineExcel(rows: LotNumberRow[], opts: { fileName: string }) {
+  const ExcelJS = (await import("exceljs")).default;
+  const groups = new Map<string, LotNumberRow[]>();
+  for (const r of rows) {
+    const key = `${r.poNo}|${r.poLine ?? ""}|${r.productCode}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Lot Numbers", { views: [{ state: "frozen", ySplit: 1 }] });
+  ws.columns = [
+    { header: "Lot No", width: 20 },
+    { header: "Stickers", width: 32 },
+    { header: "PO No", width: 14 },
+    { header: "PO Line", width: 9 },
+    { header: "Product Code", width: 16 },
+    { header: "Description", width: 45 },
+    { header: "Design Brand", width: 16 },
+    { header: "Design Code", width: 14 },
+    { header: "Emboss Code", width: 14 },
+    { header: "UOM", width: 8 },
+    { header: "Expected", width: 10 },
+    { header: "Received", width: 10 },
+    { header: "Rejected", width: 10 },
+    { header: "Accepted", width: 10 },
+    { header: "Customer", width: 24 },
+    { header: "Customer Organization", width: 30 },
+    { header: "Customer PO", width: 18 },
+  ];
+  ws.getRow(1).font = { bold: true };
+
+  const uniq = (vals: string[]) => [...new Set(vals.filter(Boolean))].join("\n");
+  const sum = (lots: LotNumberRow[], f: (r: LotNumberRow) => number) => lots.reduce((s, r) => s + f(r), 0);
+  const ordered = [...groups.values()].sort((a, b) => a[0].poNo.localeCompare(b[0].poNo) || (a[0].poLine ?? 0) - (b[0].poLine ?? 0));
+  for (const lots of ordered) {
+    const first = lots[0];
+    const stickers = lots
+      .filter((r) => r.qtyAccepted >= 1)
+      .map((r) => `${lotWithPiece(r.lotNo, 1)} → ${pieceNo(Math.floor(r.qtyAccepted))}`)
+      .join(",\n");
+    const row = ws.addRow([
+      lots.map((r) => r.lotNo).join("\n"),
+      stickers,
+      first.poNo,
+      first.poLine ?? "",
+      first.productCode,
+      first.description,
+      first.designBrandName,
+      first.designBrandCode,
+      first.privateLabelCode,
+      first.uom,
+      sum(lots, (r) => r.qtyExpected),
+      sum(lots, (r) => r.qtyReceived),
+      sum(lots, (r) => r.qtyRejected),
+      sum(lots, (r) => r.qtyAccepted),
+      uniq(lots.map((r) => r.customerName)),
+      uniq(lots.map((r) => r.customerOrganization)),
+      uniq(lots.map((r) => r.customerPoNo)),
+    ]);
+    row.alignment = { vertical: "top", wrapText: true };
+  }
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } };
+
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = opts.fileName.endsWith(".xlsx") ? opts.fileName : `${opts.fileName}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
