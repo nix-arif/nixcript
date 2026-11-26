@@ -18,6 +18,7 @@ import {
   purchaseOrder,
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
+import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, notInArray, isNotNull, isNull, ne, ilike, or } from "drizzle-orm";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -288,7 +289,8 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
   const { orgId, userId } = await requireAccess("purchase-requisition:create");
   // The line keeps the supplier the requester asked for, even if another organization handles it (see Supplier Rules):
   // the PO that is issued from this PR is what gets routed to that organization.
-  const prNo = await generatePrNo(orgId);
+  // the running number comes on approval; until then a draft reference (lib/draft-ref.ts)
+  const prNo = newDraftRef();
 
   // Derive salesOrderNo from salesOrderId if client didn't supply it
   let resolvedSoNo = input.salesOrderNo ?? null;
@@ -531,7 +533,9 @@ export async function approvePurchaseRequisition(id: string): Promise<void> {
   if (!existing) throw new Error("Purchase requisition not found");
   if (existing.status !== "submitted") throw new Error("Only submitted requisitions can be approved");
   await assertSelfActionAllowed(orgId, "purchase-requisition:approve", existing.requestedBy, userId, "approve");
-  await db.update(purchaseRequisition).set({ status: "approved", approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseRequisition.id, id));
+  // a PR gets its running number when it is approved (lib/draft-ref.ts)
+  const prNo = isDraftRef(existing.prNo) ? await generatePrNo(orgId) : existing.prNo;
+  await db.update(purchaseRequisition).set({ status: "approved", approvedBy: userId, approvedAt: new Date(), prNo }).where(eq(purchaseRequisition.id, id));
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");
 }
@@ -1021,7 +1025,7 @@ export async function checkAndTriggerReplenishment(
       ? Math.max(1, parseFloat(lvl.maxStock) - available)
       : parseFloat(lvl.reorderPoint!);
 
-    const prNo = await generatePrNo(orgId);
+    const prNo = newDraftRef(); // numbered on approval
     const [row] = await db.insert(purchaseRequisition).values({
       id: nanoid(),
       organizationId: orgId,

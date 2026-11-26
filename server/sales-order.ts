@@ -25,6 +25,7 @@ import {
 } from "@/db/schema";
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
+import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
 import { uniqueCpoNoFor } from "@/lib/customer-po/unique-no";
 import { eq, and, ne, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -633,7 +634,8 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
     ? await buildCustomerSnapshot(input.customerId, orgId, input.customerOrgMemberId)
     : null;
 
-  const soNo = await generateSoNo(orgId);
+  // the running number comes on approval (assignSoNumber); until then a draft reference
+  const soNo = newDraftRef();
 
   const [row] = await db
     .insert(salesOrder)
@@ -1158,22 +1160,22 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | { ok:
   // Delete the SO (items cascade via onDelete: "cascade")
   await db.delete(salesOrder).where(eq(salesOrder.id, id));
 
-  // Release the running number: decrement the counter if this was the latest number for the year
-  const soYear = parseInt(existing.soNo.match(/\d{4}/)?.[0] ?? "0", 10);
-  const soNum  = parseInt(existing.soNo.split("-").pop() ?? "0", 10);
-
-  if (soYear > 0 && soNum > 0) {
+  // Release the running number when it was the latest one given out (a draft has none). The
+  // counter's number is rebuilt in the org's own format and compared, so any format works.
+  if (!isDraftRef(existing.soNo)) {
     const [counter] = await db
       .select()
       .from(salesOrderCounter)
       .where(eq(salesOrderCounter.organizationId, orgId))
       .limit(1);
-
-    if (counter && counter.year === soYear && counter.lastNumber === soNum && soNum > 1) {
-      await db
-        .update(salesOrderCounter)
-        .set({ lastNumber: soNum - 1 })
-        .where(eq(salesOrderCounter.organizationId, orgId));
+    if (counter && counter.lastNumber > 0) {
+      const cfg = await getNumberingConfig(orgId, "so");
+      if (buildDocumentNo(cfg, counter.year, counter.lastNumber) === existing.soNo) {
+        await db
+          .update(salesOrderCounter)
+          .set({ lastNumber: counter.lastNumber - 1 })
+          .where(eq(salesOrderCounter.organizationId, orgId));
+      }
     }
   }
 
@@ -1331,6 +1333,23 @@ export async function submitSalesOrder(id: string): Promise<void> {
 
 // ── Approve (submitted → confirmed) ───────────────────────────────────────
 
+// An SO gets its running number when it is approved (lib/draft-ref.ts). Every document that
+// copied the draft reference follows it. Returns the SO's number (unchanged if it had one).
+async function assignSoNumber(orgId: string, soId: string, current: string): Promise<string> {
+  if (!isDraftRef(current)) return current;
+  const soNo = await generateSoNo(orgId);
+  await db.update(salesOrder).set({ soNo }).where(eq(salesOrder.id, soId));
+  await Promise.all([
+    db.update(customerPurchaseOrder).set({ salesOrderNo: soNo }).where(eq(customerPurchaseOrder.salesOrderId, soId)),
+    db.update(purchaseRequisition).set({ salesOrderNo: soNo }).where(eq(purchaseRequisition.salesOrderId, soId)),
+    db.update(deliveryOrder).set({ salesOrderNo: soNo }).where(eq(deliveryOrder.salesOrderId, soId)),
+    db.update(invoice).set({ salesOrderNo: soNo }).where(eq(invoice.salesOrderId, soId)),
+    db.update(consignment).set({ soNo }).where(eq(consignment.soId, soId)),
+    db.update(salesOrder).set({ originalSoNo: soNo }).where(eq(salesOrder.originalSoId, soId)),
+  ]);
+  return soNo;
+}
+
 export async function approveSalesOrder(id: string): Promise<void> {
   const { orgId, userId, session } = await requireAccess("sales-order:approve");
 
@@ -1344,6 +1363,7 @@ export async function approveSalesOrder(id: string): Promise<void> {
   await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "approve");
 
   await db.update(salesOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(salesOrder.id, id));
+  const soNo = await assignSoNumber(orgId, id, so.soNo);
 
   const soItems = await db
     .select({ productId: salesOrderItem.productId })
@@ -1370,9 +1390,9 @@ export async function approveSalesOrder(id: string): Promise<void> {
     recipientUserIds: [so.createdBy],
     type: "so:approved",
     emailType: "approved",
-    title: `SO ${so.soNo} approved`,
-    body: `Your sales order ${so.soNo} has been approved by ${actorName}.`,
-    soNo: so.soNo,
+    title: `SO ${soNo} approved`,
+    body: `Your sales order ${soNo} has been approved by ${actorName}.`,
+    soNo,
     soId: so.id,
     customerName,
     grandTotal: so.grandTotal ?? undefined,
