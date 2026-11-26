@@ -71,31 +71,69 @@ function format(style: NumberStyle, n: number): string {
   }
 }
 
-function expectedLabels(items: RowItem[]): { order: number[]; expected: string[] } {
+// A plain main-row label: all digits, or all letters (covers a/A and roman numerals)
+const isPlainLabel = (l: string) => /^\d+$/.test(l) || /^[a-zA-Z]+$/.test(l);
+
+type RowPlan = {
+  order: number[];
+  /** Expected label per display position */
+  expected: string[];
+  /** Positions that are sub-items (e.g. "1a" under "1"); they don't count in the sequence */
+  isSub: boolean[];
+  style: NumberStyle;
+  mainCount: number;
+};
+
+// Walk the rows in table order. A label that starts with the main row above it and
+// adds more (1a, 1.1, 2-b, A(i)) is a sub-item: it keeps its suffix and follows its
+// parent's new label. Every other row is a main row and gets the next label in the style.
+function planRows(items: RowItem[]): RowPlan {
   const order = displayOrder(items);
-  const labels = order.map((i) => String(items[i].rowNo ?? "").trim()).filter(Boolean);
-  const style = detectStyle(labels);
-  return { order, expected: order.map((_, pos) => format(style, pos + 1)) };
+  const labels = order.map((i) => String(items[i].rowNo ?? "").trim());
+  const style = detectStyle(labels.filter((l) => l && isPlainLabel(l)));
+
+  const expected: string[] = [];
+  const isSub: boolean[] = [];
+  let mainCount = 0;
+  let parentOld: string | null = null;
+  let parentNew = "";
+  for (const label of labels) {
+    const sub =
+      parentOld !== null && label.length > parentOld.length && label.startsWith(parentOld) && !isPlainLabel(label);
+    if (sub) {
+      expected.push(parentNew + label.slice(parentOld!.length));
+      isSub.push(true);
+    } else {
+      mainCount++;
+      parentOld = label || null;
+      parentNew = format(style, mainCount);
+      expected.push(parentNew);
+      isSub.push(false);
+    }
+  }
+  return { order, expected, isSub, style, mainCount };
 }
 
-/** True when every row's # follows on from the previous one (in whatever style the user chose). */
+/** True when the main rows' # follow on from each other (in whatever style the user chose). Sub-items like "1a" are ignored. */
 export function isRowSequenceValid(items: RowItem[]): boolean {
-  const { order, expected } = expectedLabels(items);
-  return order.every((idx, pos) => String(items[idx].rowNo ?? "").trim() === expected[pos]);
+  const { order, expected, isSub } = planRows(items);
+  return order.every((idx, pos) => isSub[pos] || String(items[idx].rowNo ?? "").trim() === expected[pos]);
 }
 
-/** Relabel every row in table order, keeping the style in use (numbers, letters or roman). */
+/** Relabel rows in table order, keeping the style in use. Sub-items keep their suffix under their parent's new label. */
 export function renumberRows<T extends RowItem>(items: T[]): T[] {
-  const { order, expected } = expectedLabels(items);
+  const { order, expected } = planRows(items);
   const next = [...items];
   order.forEach((idx, pos) => { next[idx] = { ...items[idx], rowNo: expected[pos] }; });
   return next;
 }
 
-/** Label for a row added at the end, in the style the list already uses. */
+/** Label for a main row added at the end, in the style the list already uses. */
 export function nextRowLabel(items: RowItem[]): string {
-  const labels = displayOrder(items).map((i) => String(items[i].rowNo ?? "").trim()).filter(Boolean);
-  const style = detectStyle(labels);
-  if (style === "number") return String(labels.reduce((max, l) => Math.max(max, Number(l) || 0), 0) + 1);
-  return format(style, items.length + 1);
+  const { style, mainCount, order, isSub } = planRows(items);
+  if (style === "number") {
+    const max = order.reduce((m, idx, pos) => (isSub[pos] ? m : Math.max(m, Number(items[idx].rowNo) || 0)), 0);
+    return String(max + 1);
+  }
+  return format(style, mainCount + 1);
 }
