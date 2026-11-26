@@ -29,13 +29,19 @@ export type QuotationDiscount = {
   discountPct: string;
   /** Overall discount RM on the quotation (the fixed amount, or what its % came to) */
   discountAmt: string;
+  /**
+   * The quotation's full subtotal. When given, a fixed amount is shared out by the part of the
+   * quotation being ordered (RM 500 off a RM 10,000 quotation, RM 4,000 ordered → RM 200).
+   */
+  subtotal?: string;
 };
 
 /**
  * The SO's overall discount, combined from the linked quotations.
  * - One quotation, or several sharing the same %: keep it as that %.
  * - Otherwise (a fixed amount, or different %s): a fixed RM total, where each
- *   quotation's % applies only to the SO lines that came from it.
+ *   quotation's % applies only to the lines that came from it, and a fixed amount
+ *   is shared out by the part of the quotation ordered (when its subtotal is given).
  */
 export function discountFromQuotations(
   items: { sourceQuotationId?: string | null; totalPrice?: string | null }[],
@@ -53,13 +59,14 @@ export function discountFromQuotations(
 
   let total = 0;
   quotations.forEach((q, i) => {
+    const sub = items
+      .filter((it) => it.sourceQuotationId === q.id)
+      .reduce((s, it) => s + (parseFloat(it.totalPrice ?? "0") || 0), 0);
     if (pcts[i] > 0) {
-      const sub = items
-        .filter((it) => it.sourceQuotationId === q.id)
-        .reduce((s, it) => s + (parseFloat(it.totalPrice ?? "0") || 0), 0);
       total += (sub * pcts[i]) / 100;
-    } else {
-      total += fixed[i];
+    } else if (fixed[i] > 0) {
+      const full = parseFloat(q.subtotal ?? "") || 0;
+      total += full > 0 ? fixed[i] * Math.min(1, sub / full) : fixed[i];
     }
   });
   return { mode: "fixed", pct: "0", amt: total.toFixed(2) };

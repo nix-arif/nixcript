@@ -60,6 +60,12 @@ import { OverallDiscountInput } from "../overall-discount-input";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
+// The overall discount saved on a CPO, if it was saved with one (older CPOs have none recorded)
+function cpoDiscount(c: { overallDiscountPct?: string | null; overallDiscountAmt?: string | null }) {
+  if (c.overallDiscountPct == null && c.overallDiscountAmt == null) return {};
+  return { discountPct: c.overallDiscountPct ?? "0", discountAmt: c.overallDiscountAmt ?? "0" };
+}
+
 type LinkedQuotation = {
   id: string;
   quotationNo: string;
@@ -94,6 +100,9 @@ type LinkedCpo = {
   _salesPersonInherited?: string | null;
   _deliveryDateInherited?: string | null;
   _deliveryAddressInherited?: string | null;
+  // Overall discount saved on the CPO (carried from its quotations); undefined for CPOs saved before it was kept
+  discountPct?: string;
+  discountAmt?: string;
 };
 
 interface LineItem extends SalesOrderItemInput {
@@ -391,12 +400,25 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   // Items — useId gives a stable ID consistent between SSR and client hydration
   const initialItemId = useId();
   const [items, setItems] = useState<LineItem[]>(() => [{ ...newLine(1), _key: initialItemId }]);
-  // Quotations picked directly carry their overall discount (CPO-linked ones don't)
-  const discountQuotations = linkedQuotations.flatMap((q) =>
-    q.discountPct !== undefined ? [{ id: q.id, discountPct: q.discountPct, discountAmt: q.discountAmt ?? "0" }] : [],
-  );
+  // Where the overall discount comes from: quotations picked directly, and CPOs (which carry their quotations' discount).
+  // Quotations auto-linked from a CPO bring none of their own, so the CPO's discount isn't counted twice.
+  const discountQuotations = [
+    ...linkedQuotations.flatMap((q) =>
+      q.discountPct !== undefined ? [{ id: q.id, discountPct: q.discountPct, discountAmt: q.discountAmt ?? "0" }] : [],
+    ),
+    ...linkedCpos.flatMap((c) =>
+      c.discountPct !== undefined ? [{ id: c.id, discountPct: c.discountPct, discountAmt: c.discountAmt ?? "0" }] : [],
+    ),
+  ];
   const overallDiscount: OverallDiscount =
-    manualDiscount ?? (discountQuotations.length > 0 ? discountFromQuotations(items, discountQuotations) : NO_DISCOUNT);
+    manualDiscount ??
+    (discountQuotations.length > 0
+      ? discountFromQuotations(
+          items.map((i) => ({ sourceQuotationId: i.sourceQuotationId || i.sourceCustomerPoId, totalPrice: i.totalPrice })),
+          discountQuotations,
+        )
+      : NO_DISCOUNT);
+  const discountFromCpo = linkedCpos.some((c) => c.discountPct !== undefined);
   // Descriptions follow the product database (by design code for OEM items, else by code)
   useDbDescriptions(items, setItems, { showSourcing, syncOnLoad: true });
   const itemsRef = useRef(items);
@@ -426,6 +448,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         _salesPersonInherited: c.salesPersonName ?? null,
         _deliveryDateInherited: dateStr,
         _deliveryAddressInherited: addr,
+        ...cpoDiscount(c),
       };
     }));
 
@@ -635,8 +658,10 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         _salesPersonInherited: data.salesPersonName ?? null,
         _deliveryDateInherited: inheritedDate,
         _deliveryAddressInherited: inheritedAddr,
+        ...cpoDiscount(data),
       };
       setLinkedCpos((prev) => [...prev, linked]);
+      setManualDiscount(null); // follow the CPOs' discounts again
 
       // Auto-link quotations from CPO
       const qLinks = (data.quotationLinks && data.quotationLinks.length > 0)
@@ -771,6 +796,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   }
 
   function removeCpo(id: string) {
+    setManualDiscount(null);
     setCpoSalesPersons((prev) => { const next = { ...prev }; delete next[id]; return next; });
     setLinkedCpos((prev) => {
       const next = prev.filter((c) => c.id !== id);
@@ -3084,10 +3110,10 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 hint={
                   manualDiscount
                     ? undefined
-                    : discountQuotations.length > 1 && overallDiscount.mode === "fixed"
-                      ? `Combined from ${discountQuotations.length} quotations`
+                    : discountQuotations.length > 1 && overallDiscount.mode === "fixed" && overallDiscAmt > 0
+                      ? `Combined from ${discountQuotations.length} ${discountFromCpo ? "customer POs / quotations" : "quotations"}`
                       : discountQuotations.length > 0 && overallDiscAmt > 0
-                        ? "From quotation"
+                        ? discountFromCpo ? "From customer PO" : "From quotation"
                         : undefined
                 }
               />

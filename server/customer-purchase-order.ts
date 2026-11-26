@@ -131,6 +131,9 @@ export interface CreateCustomerPoInput {
   items?: CpoItemInput[];
   amount?: string;
   currency?: string;
+  // Overall discount (from the quotation, editable): a % (pct > 0) or a fixed RM amount. null: none; undefined: unchanged
+  overallDiscountPct?: string | null;
+  overallDiscountAmt?: string | null;
   documentKey?: string | null; // undefined: unchanged; null: removed (its file is deleted once saved)
   salesPersonName?: string;
   associateSalesPersons?: { id: string; name: string }[];
@@ -337,6 +340,8 @@ export type CustomerPoForSoCreate = {
   linkedSo: { id: string; soNo: string; status: string } | null;
   amount: string;
   currency: string;
+  overallDiscountPct: string | null;
+  overallDiscountAmt: string | null;
   items: CpoItemInput[] | null;
   deliveryDate: Date | null;
   deliveryAddress: string | null;
@@ -359,6 +364,8 @@ export async function getCustomerPoForSoCreate(id: string): Promise<CustomerPoFo
       salesOrderId: customerPurchaseOrder.salesOrderId,
       amount: customerPurchaseOrder.amount,
       currency: customerPurchaseOrder.currency,
+      overallDiscountPct: customerPurchaseOrder.overallDiscountPct,
+      overallDiscountAmt: customerPurchaseOrder.overallDiscountAmt,
       items: customerPurchaseOrder.items,
       deliveryDate: customerPurchaseOrder.deliveryDate,
       deliveryAddress: customerPurchaseOrder.deliveryAddress,
@@ -505,6 +512,8 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
       items: input.items ?? null,
       amount: input.amount ?? "0",
       currency: input.currency ?? "MYR",
+      overallDiscountPct: input.overallDiscountPct ?? null,
+      overallDiscountAmt: input.overallDiscountAmt ?? null,
       documentKey: input.documentKey ?? null,
       notes: input.notes ?? null,
       salesPersonName: input.salesPersonName ?? null,
@@ -587,6 +596,8 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
       items: input.items !== undefined ? (input.items ?? null) : existing.items,
       amount: input.amount ?? existing.amount,
       currency: input.currency ?? existing.currency,
+      overallDiscountPct: input.overallDiscountPct !== undefined ? input.overallDiscountPct : existing.overallDiscountPct,
+      overallDiscountAmt: input.overallDiscountAmt !== undefined ? input.overallDiscountAmt : existing.overallDiscountAmt,
       documentKey: input.documentKey !== undefined ? input.documentKey : existing.documentKey,
       salesPersonName: input.salesPersonName !== undefined ? (input.salesPersonName ?? null) : existing.salesPersonName,
       associateSalesPersons: input.associateSalesPersons !== undefined

@@ -3676,6 +3676,9 @@ export const customerPurchaseOrder = pgTable(
 
     amount: text("amount").notNull().default("0"),
     currency: text("currency").notNull().default("MYR"),
+    // Overall discount carried from the quotation(s): a % (pct > 0) or a fixed RM amount (pct 0). Null: none.
+    overallDiscountPct: text("overall_discount_pct"),
+    overallDiscountAmt: text("overall_discount_amt"),
 
     // Scanned / PDF copy of customer's PO (R2 private)
     documentKey: text("document_key"),

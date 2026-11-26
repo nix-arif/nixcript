@@ -140,6 +140,12 @@ export function CustomerPoDetailClient({
             <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">PO Details</h2>
             <Row label="PO No" value={cpo.customerPoNo} mono />
             <Row label="Amount" value={`${fmt(cpo.amount)}${cpo.currency !== "MYR" ? ` ${cpo.currency}` : ""}`} />
+            {parseFloat(cpo.overallDiscountAmt ?? "0") > 0 && (
+              <Row
+                label="Overall discount"
+                value={`${parseFloat(cpo.overallDiscountPct ?? "0") > 0 ? `${cpo.overallDiscountPct}% · ` : ""}−${fmt(cpo.overallDiscountAmt!)}`}
+              />
+            )}
             <Row label="Received" value={fmtDate(cpo.receivedDate ?? cpo.createdAt)} />
             <Row label="Status" value={cpoStatusCfg.label} />
             {cpo.quotationNo && <Row label="Quotation" value={cpo.quotationNo} mono />}

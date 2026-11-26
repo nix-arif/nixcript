@@ -1039,6 +1039,33 @@ export async function searchQuotationsByNo(query: string, includeDummy = false) 
 }
 
 // ── Fetch quotation with items for SO pre-fill ───────────────────────────
+// The overall discount of each quotation (for a Customer PO, which carries it on)
+export async function getQuotationDiscounts(ids: string[]): Promise<
+  { id: string; quotationNo: string; discountPct: string; discountAmt: string; subtotal: string }[]
+> {
+  if (ids.length === 0) return [];
+  const { orgId, userId } = await requireAccess("quotation:read");
+  const ownerOrgs = await getAllOwnerOrgs(userId, orgId);
+  const ownerOrgIds = ownerOrgs.length > 0 ? ownerOrgs.map((o) => o.id) : [orgId];
+  const rows = await db
+    .select({
+      id: quotation.id,
+      quotationNo: quotation.quotationNo,
+      discountPct: quotation.overallDiscountPct,
+      discountAmt: quotation.overallDiscountAmt,
+      subtotal: quotation.subtotal,
+    })
+    .from(quotation)
+    .where(and(inArray(quotation.id, ids), inArray(quotation.organizationId, ownerOrgIds)));
+  return rows.map((r) => ({
+    id: r.id,
+    quotationNo: r.quotationNo,
+    discountPct: r.discountPct ?? "0",
+    discountAmt: r.discountAmt ?? "0",
+    subtotal: r.subtotal ?? "0",
+  }));
+}
+
 export async function getQuotationForSO(id: string) {
   const { orgId, userId } = await requireAccess("quotation:read");
   const ownerOrgs = await getAllOwnerOrgs(userId, orgId);

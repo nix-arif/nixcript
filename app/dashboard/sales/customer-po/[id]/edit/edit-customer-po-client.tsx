@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, checkCustomerPoNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
-import { searchQuotationsByNo, getQuotationForSO } from "@/server/quotation";
+import { searchQuotationsByNo, getQuotationForSO, getQuotationDiscounts } from "@/server/quotation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,8 @@ import { PageHeader } from "@/components/page-header";
 import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
 import { AMOUNT_TONE, AmountCheckNote, DocTotalCheck, amountCheck, usePoDocumentTotal } from "../../amount-check";
+import { CpoDiscountPanel, useCpoDiscount } from "../../use-cpo-discount";
+import { overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
 import { useUnsavedUpload } from "../../use-unsaved-upload";
 import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
 import { isSetPriced } from "@/lib/quotation-set-price";
@@ -86,6 +88,12 @@ const STATUS_COLORS: Record<string, string> = {
 
 function sumItems(items: EditableItem[]): string {
   return sumLines(items);
+}
+
+// The overall discount as the CPO stores it: a % (with what it comes to), or a fixed RM amount
+function discountForSave(d: OverallDiscount, items: Parameters<typeof sumLines>[0]) {
+  const amt = overallDiscountAmount(parseFloat(sumLines(items)) || 0, d).toFixed(2);
+  return d.mode === "pct" ? { overallDiscountPct: d.pct || "0", overallDiscountAmt: amt } : { overallDiscountPct: "0", overallDiscountAmt: amt };
 }
 
 export function EditCustomerPoClient({
@@ -167,6 +175,19 @@ export function EditCustomerPoClient({
       } as EditableItem;
     })
   );
+  const cpoDisc = useCpoDiscount({
+    pct: (cpo as { overallDiscountPct?: string | null }).overallDiscountPct ?? null,
+    amt: (cpo as { overallDiscountAmt?: string | null }).overallDiscountAmt ?? null,
+  });
+  // the quotations already on this CPO: their discounts, to compare with (and for an older CPO, to follow)
+  useEffect(() => {
+    const ids = ((cpoAny.quotationLinks as { quotationId: string }[] | null) ?? []).map((q) => q.quotationId);
+    if (ids.length === 0) return;
+    getQuotationDiscounts(ids)
+      .then((list) => cpoDisc.loadQuotations(list))
+      .catch(() => { /* no comparison then */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const itemsRef = useRef(items);
   useEffect(() => { itemsRef.current = items; }, [items]);
 
@@ -408,9 +429,15 @@ export function EditCustomerPoClient({
         return calcItemTotal(base);
       });
 
+      cpoDisc.addQuotation({
+        quotationNo: qt.quotationNo,
+        discountPct: qt.overallDiscountPct ?? "0",
+        discountAmt: qt.overallDiscountAmt ?? "0",
+        subtotal: qt.subtotal ?? "0",
+      });
       setItems((prev) => {
         const next = [...prev, ...imported];
-        if (!amountOverride) setAmount(sumItems(next));
+        if (!amountOverride) setAmount(cpoDisc.netTotal(next));
         return next;
       });
 
@@ -425,11 +452,12 @@ export function EditCustomerPoClient({
 
   function removeQuotation(qtId: string) {
     const q = linkedQuotations.find((q) => q.id === qtId);
+    if (q) cpoDisc.removeQuotation(q.quotationNo);
     setLinkedQuotations((prev) => prev.filter((q) => q.id !== qtId));
     if (!q?.isPreloaded) {
       setItems((prev) => {
         const next = prev.filter((i) => i._quotationId !== qtId);
-        if (!amountOverride) setAmount(sumItems(next));
+        if (!amountOverride) setAmount(cpoDisc.netTotal(next));
         return next;
       });
     }
@@ -605,7 +633,7 @@ export function EditCustomerPoClient({
             const gid = next.find((i) => i._key === key)?.setGroupId;
             if (gid) next = next.map((i) => (i.setGroupId === gid && !isNotAsSetLabel(i.setGroupLabel) ? { ...i, setCpoTitle: title } : i));
           }
-          if ((qtys.size > 0 || setLabels.size > 0) && !amountOverride) setAmount(sumItems(next));
+          if ((qtys.size > 0 || setLabels.size > 0) && !amountOverride) setAmount(cpoDisc.netTotal(next));
           return sortBySheetOrder(next, order);
         });
       const parts = [
@@ -670,7 +698,7 @@ export function EditCustomerPoClient({
         const updated = { ...i, ...patch };
         return ["qty", "unitPrice", "discountPct"].some((k) => k in patch) ? calcItemTotal(updated) : updated;
       });
-      if (!amountOverride) setAmount(sumItems(next));
+      if (!amountOverride) setAmount(cpoDisc.netTotal(next));
       return next;
     });
   }
@@ -678,7 +706,7 @@ export function EditCustomerPoClient({
   function toggleAll(included: boolean) {
     setItems((prev) => {
       const next = prev.map((i) => ({ ...i, included }));
-      if (!amountOverride) setAmount(sumItems(next));
+      if (!amountOverride) setAmount(cpoDisc.netTotal(next));
       return next;
     });
   }
@@ -693,7 +721,7 @@ export function EditCustomerPoClient({
           ? calcItemTotal({ ...x, setGroupLabel: newLabel, setGroupId: gid, setQty: existing?.setQty || x.setQty || "1", setCpoTitle: existing?.setCpoTitle ?? x.setCpoTitle, setPrice: existing?.setPrice })
           : x,
       );
-      if (!amountOverride) setAmount(sumItems(next));
+      if (!amountOverride) setAmount(cpoDisc.netTotal(next));
       return next;
     });
   }
@@ -703,7 +731,7 @@ export function EditCustomerPoClient({
       const next = prev.map((x) =>
         x.setGroupId === groupId ? calcItemTotal({ ...x, setQty: newQty }) : x,
       );
-      if (!amountOverride) setAmount(sumItems(next));
+      if (!amountOverride) setAmount(cpoDisc.netTotal(next));
       return next;
     });
   }
@@ -718,7 +746,7 @@ export function EditCustomerPoClient({
       const next = prev.map((x) =>
         x.setGroupId === groupId ? { ...x, setGroupLabel: newLabel, setGroupId: newLabel ? `g-${newLabel}` : "" } : x,
       );
-      if (!amountOverride) setAmount(sumItems(next));
+      if (!amountOverride) setAmount(cpoDisc.netTotal(next));
       return next;
     });
   }
@@ -730,7 +758,7 @@ export function EditCustomerPoClient({
           ? calcItemTotal({ ...x, setGroupId: "", setGroupLabel: "", setQty: "", setCpoTitle: "", setPrice: undefined })
           : x,
       );
-      if (!amountOverride) setAmount(sumItems(next));
+      if (!amountOverride) setAmount(cpoDisc.netTotal(next));
       return next;
     });
   }
@@ -859,6 +887,7 @@ export function EditCustomerPoClient({
           : undefined,
         amount,
         currency,
+        ...discountForSave(cpoDisc.discountFor(items), items),
         // the new file, else the one it had; null when it was removed (the server then deletes the old file once saved)
         documentKey:     pdfKey ?? existingDocKey ?? null,
         salesPersonName: salesPersons[0]?.name || undefined,
@@ -888,11 +917,20 @@ export function EditCustomerPoClient({
   const computedTotal = sumItems(items);
   // the CPO amount against the items ticked (colour of the Amount box and the items' total, and a short note)
   const selectedCount = items.filter((i) => i.included).length;
-  const amountState = amountCheck(amount, computedTotal, selectedCount).state;
+  // the amount should be the items' total less the overall discount carried from the quotation
+  const netItemsTotal = cpoDisc.netTotal(items);
+  const hasDiscount = netItemsTotal !== computedTotal;
+  const amountState = amountCheck(amount, netItemsTotal, selectedCount).state;
   // the total on the customer's PO document (the one just attached, else the saved one): the items' Total is coloured against it
   const docTotal = usePoDocumentTotal(pdfFile, existingDocKey);
-  const totalState = docTotal != null ? amountCheck(computedTotal, docTotal.toFixed(2), selectedCount).state : amountState;
+  const totalState = docTotal != null ? amountCheck(netItemsTotal, docTotal.toFixed(2), selectedCount).state : amountState;
   const showSearch = isFirstQuotation || showAddSearch;
+
+  // the user changed the overall discount (null: back to the quotation's); the amount follows unless typed in
+  const changeDiscount = (d: OverallDiscount | null) => {
+    cpoDisc.setManual(d);
+    if (!amountOverride) setAmount(cpoDisc.netTotal(items));
+  };
 
   return (
     <div className="p-6">
@@ -1192,8 +1230,8 @@ export function EditCustomerPoClient({
                 className={cn("h-9 text-sm tabular-nums", AMOUNT_TONE[amountState].input)}
                 aria-invalid={amountState === "mismatch" || undefined}
               />
-              <AmountCheckNote amount={amount} itemsTotal={computedTotal} selectedCount={selectedCount} currency={currency}
-                onUseItemsTotal={() => { setAmount(computedTotal); setAmountOverride(false); }} />
+              <AmountCheckNote amount={amount} itemsTotal={netItemsTotal} selectedCount={selectedCount} currency={currency}
+                onUseItemsTotal={() => { setAmount(netItemsTotal); setAmountOverride(false); }} />
               {items.length > 0 && !amountOverride && amountState === "ok" && (
                 <p className="text-[10px] text-muted-foreground">Auto-calculated from items</p>
               )}
@@ -1532,8 +1570,18 @@ export function EditCustomerPoClient({
                         </span>
                       )}
                     </td>
-                    <td className={cn("pt-3 text-right tabular-nums font-bold", AMOUNT_TONE[totalState].text)}>
+                    <td className={cn("pt-3 text-right tabular-nums font-bold", !hasDiscount && AMOUNT_TONE[totalState].text)}>
                       {parseFloat(computedTotal).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colSpan={9} className="pt-2">
+                      <CpoDiscountPanel
+                        items={items}
+                        disc={cpoDisc}
+                        onChange={changeDiscount}
+                        netTone={AMOUNT_TONE[totalState].text}
+                      />
                     </td>
                   </tr>
                   {docTotal != null && (
