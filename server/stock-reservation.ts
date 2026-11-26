@@ -1,5 +1,6 @@
 "use server";
 
+import { soLineQty } from "@/lib/sales-order/set-qty";
 import { db } from "@/db";
 import { salesOrder, salesOrderItem, stockLevel, product } from "@/db/schema";
 import { eq, and, inArray, desc } from "drizzle-orm";
@@ -92,7 +93,7 @@ export async function performStockCheckAndReserve(
           orgId,
           productId: item.productId!,
           warehouseLabel: "Default",
-          delta: parseFloat(item.qty ?? "1"),
+          delta: soLineQty(item), // × the number of sets
         }),
       ),
     );

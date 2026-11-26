@@ -18,6 +18,7 @@ import {
 } from "@/server/purchase-requisition";
 import { getProductByCode } from "@/server/products";
 import { useAutoSave } from "@/lib/use-auto-save";
+import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AutoSaveStatus } from "@/components/auto-save-status";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { Button } from "@/components/ui/button";
@@ -228,8 +229,10 @@ interface EditLine extends PrItemInput {
   _setQty?: string | null;
 }
 
+// a line in a set is for one set: × the number of sets
 function calcTotal(item: EditLine): number {
-  return (parseFloat(item.qty || "1") || 1) * (parseFloat(item.estimatedUnitCost || "0") || 0);
+  const sets = soLineSets({ setGroupId: item._setGroupId, setQty: item._setQty });
+  return (parseFloat(item.qty || "1") || 1) * sets * (parseFloat(item.estimatedUnitCost || "0") || 0);
 }
 
 function toEditLine(item: PrWithItems["items"][number]): EditLine {

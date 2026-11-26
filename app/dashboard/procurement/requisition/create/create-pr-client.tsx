@@ -19,6 +19,7 @@ import {
 } from "@/server/purchase-requisition";
 import { toggleSoItemPrExcluded } from "@/server/sales-order";
 import { useAutoSave, useUserInteracted } from "@/lib/use-auto-save";
+import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AutoSaveStatus } from "@/components/auto-save-status";
 import { useArrowFieldNav } from "@/hooks/use-arrow-field-nav";
 import { getProductByCode } from "@/server/products";
@@ -275,8 +276,10 @@ const newLine = (rowNo: number): LineItem => ({
   _imageUploading: false,
 });
 
+// a line in a set is for one set: × the number of sets
 function calcTotal(item: LineItem) {
-  return ((parseFloat(item.qty || "1") || 1) * (parseFloat(item.estimatedUnitCost || "0") || 0)).toFixed(2);
+  const sets = soLineSets({ setGroupId: item._setGroupId, setQty: item._setQty });
+  return ((parseFloat(item.qty || "1") || 1) * sets * (parseFloat(item.estimatedUnitCost || "0") || 0)).toFixed(2);
 }
 
 // ── Main form ─────────────────────────────────────────────────────────────────

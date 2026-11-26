@@ -5,6 +5,7 @@ import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SoReferenceDocs } from "@/components/sales-order/reference-docs";
+import { soLineQty } from "@/lib/sales-order/set-qty";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { exportSalesOrderExcel } from "@/lib/sales-order/export-excel";
@@ -895,13 +896,13 @@ export function SalesOrderDetailClient({
                             <td className={`py-2 pr-3 align-top ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</td>
                             {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (() => {
                               const delivered = itemDeliveredQtys[item.id] ?? 0;
-                              const total = parseFloat(item.qty ?? "0");
+                              const total = soLineQty(item as { qty?: string | null; setGroupId?: string | null; setQty?: string | null }); // × the number of sets
                               const pct = total > 0 ? Math.min(100, (delivered / total) * 100) : 0;
                               const full = delivered >= total;
                               return (
                                 <td className={`py-2 pr-3 align-top text-right tabular-nums ${arCls}`}>
                                   <span className={cn("text-[11px] font-medium", full ? "text-green-600 dark:text-green-400" : delivered > 0 ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground")}>
-                                    {delivered > 0 ? `${delivered}/${item.qty}` : "—"}
+                                    {delivered > 0 ? `${delivered}/${total}` : "—"}
                                   </span>
                                   {delivered > 0 && !full && (
                                     <div className="mt-0.5 h-1 rounded-full bg-muted overflow-hidden w-12 ml-auto">

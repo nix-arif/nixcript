@@ -6,6 +6,7 @@
 // receiving org — see maybeCreateIntercompanySalesOrder) can use it; anything
 // exported from a "use server" file is a public, client-callable action.
 
+import { soLineQty } from "@/lib/sales-order/set-qty";
 import { db } from "@/db";
 import { salesOrderItem, stockLevel, product } from "@/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
@@ -75,7 +76,7 @@ export async function computeStockCheckItems(orgId: string, soId: string) {
 
   const result: StockCheckItem[] = productItems.map((item) => {
     const level = levelMap.get(item.productId!);
-    const required = parseFloat(item.qty ?? "1");
+    const required = soLineQty(item); // × the number of sets
     const onHand = level ? parseFloat(level.quantity) : 0;
     const reserved = level ? parseFloat(level.reservedQty) : 0;
     const available = Math.max(0, onHand - reserved);

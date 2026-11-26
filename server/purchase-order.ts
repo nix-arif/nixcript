@@ -32,6 +32,7 @@ import {
 } from "@/db/schema";
 import { nanoid } from "nanoid";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
+import { soLineQty, soLineQtyText } from "@/lib/sales-order/set-qty";
 import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike, isNotNull, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -448,7 +449,7 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
         productId: i.productId ?? null,
         productCode: i.productCode ?? null,
         description: i.description ?? null,
-        qty: i.qty ?? "1",
+        qty: soLineQtyText(i), // a PR line in a set is for one set: order for every set
         uom: i.uom ?? null,
         estimatedUnitCost: i.estimatedUnitCost ?? "0",
         currency: i.currency ?? "MYR",
@@ -712,6 +713,8 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
       description: salesOrderItem.description,
       qty: salesOrderItem.qty,
       uom: salesOrderItem.uom,
+      setGroupId: salesOrderItem.setGroupId,
+      setQty: salesOrderItem.setQty,
     })
     .from(salesOrderItem)
     .innerJoin(salesOrder, eq(salesOrder.id, salesOrderItem.salesOrderId))
@@ -744,14 +747,15 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
   const items = unorderedItems.map((i) => {
     const cost = i.productCode ? (costMap[i.productCode] ?? null) : null;
     const unitPrice = cost ?? "0";
-    const qty = parseFloat(i.qty ?? "1");
+    // the SO line is for one set: order for every set
+    const qty = soLineQty(i);
     const price = parseFloat(unitPrice);
     return {
       rowNo: i.rowNo,
       productId: i.productId ?? null,
       productCode: i.productCode ?? null,
       description: i.description ?? null,
-      qty: i.qty ?? "1",
+      qty: soLineQtyText(i),
       uom: i.uom ?? null,
       unitPrice,
       currency: i.productCode ? (currencyMap[i.productCode] ?? null) : null,

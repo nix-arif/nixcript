@@ -26,6 +26,7 @@ import {
 import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
+import { soLineQty } from "@/lib/sales-order/set-qty";
 import { uniqueCpoNoFor } from "@/lib/customer-po/unique-no";
 import { eq, and, ne, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -1211,7 +1212,7 @@ export async function updateSalesOrderStatus(id: string, status: string): Promis
   // Release reservation when cancelling a confirmed order that actually holds stock
   if (existing.status === "confirmed" && status === "cancelled" && existing.stockReservationStatus === "reserved") {
     const soItems = await db
-      .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+      .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty, setGroupId: salesOrderItem.setGroupId, setQty: salesOrderItem.setQty })
       .from(salesOrderItem)
       .where(eq(salesOrderItem.salesOrderId, id));
 
@@ -1223,7 +1224,7 @@ export async function updateSalesOrderStatus(id: string, status: string): Promis
             orgId,
             productId: i.productId!,
             warehouseLabel: "Default",
-            delta: -parseFloat(i.qty ?? "1"),
+            delta: -soLineQty(i),
           }),
         ),
     );
@@ -1672,10 +1673,10 @@ async function salesOrderHistoryIn(allowedOrgIds: string[], soId: string): Promi
 // Releases the SO's stock reservation, if it holds one.
 async function releaseSoReservation(orgId: string, soId: string, reservationStatus: string | null): Promise<void> {
   if (reservationStatus !== "reserved") return;
-  const soItems = await db.select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty }).from(salesOrderItem).where(eq(salesOrderItem.salesOrderId, soId));
+  const soItems = await db.select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty, setGroupId: salesOrderItem.setGroupId, setQty: salesOrderItem.setQty }).from(salesOrderItem).where(eq(salesOrderItem.salesOrderId, soId));
   for (const i of soItems) {
     if (!i.productId) continue;
-    await adjustReservation({ orgId, productId: i.productId, warehouseLabel: "Default", delta: -parseFloat(i.qty ?? "1") });
+    await adjustReservation({ orgId, productId: i.productId, warehouseLabel: "Default", delta: -soLineQty(i) });
   }
 }
 
@@ -1836,7 +1837,7 @@ export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok:
   // Release reserved stock (only if it was actually reserved)
   if (so.stockReservationStatus === "reserved") {
     const soItems = await db
-      .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty })
+      .select({ productId: salesOrderItem.productId, qty: salesOrderItem.qty, setGroupId: salesOrderItem.setGroupId, setQty: salesOrderItem.setQty })
       .from(salesOrderItem)
       .where(eq(salesOrderItem.salesOrderId, id));
 
@@ -1848,7 +1849,7 @@ export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok:
             orgId,
             productId: i.productId!,
             warehouseLabel: "Default",
-            delta: -parseFloat(i.qty ?? "1"),
+            delta: -soLineQty(i),
           }),
         ),
     );

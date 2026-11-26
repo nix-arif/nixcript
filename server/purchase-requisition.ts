@@ -19,6 +19,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
+import { soLineQty, soLineQtyText } from "@/lib/sales-order/set-qty";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, notInArray, isNotNull, isNull, ne, ilike, or } from "drizzle-orm";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -331,7 +332,7 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
         estimatedUnitCost: i.estimatedUnitCost ?? "0",
         currency: i.currency ?? "MYR",
         totalEstimatedCost: (
-          parseFloat(i.qty ?? "1") * parseFloat(i.estimatedUnitCost ?? "0")
+          soLineQty(i) * parseFloat(i.estimatedUnitCost ?? "0") // × the number of sets
         ).toFixed(2),
         preferredSupplierId: i.preferredSupplierId ?? null,
         preferredSupplierName: i.preferredSupplierName ?? null,
@@ -399,7 +400,7 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
         estimatedUnitCost: i.estimatedUnitCost ?? "0",
         currency: i.currency ?? "MYR",
         totalEstimatedCost: (
-          parseFloat(i.qty ?? "1") * parseFloat(i.estimatedUnitCost ?? "0")
+          soLineQty(i) * parseFloat(i.estimatedUnitCost ?? "0") // × the number of sets
         ).toFixed(2),
         preferredSupplierId: i.preferredSupplierId ?? null,
         preferredSupplierName: i.preferredSupplierName ?? null,
@@ -739,7 +740,8 @@ export async function getSoItemsForPr(soId: string) {
         productId: i.productId ?? undefined,
         productCode: i.productCode ?? "",
         description: i.description ?? "",
-        qty: i.qty ?? "1",
+        // the SO line is for one set: buy for every set (the set keeps its name, as 1 lot)
+        qty: soLineQtyText(i),
         uom: i.uom ?? "",
         estimatedUnitCost: i.productId ? (costMap.get(i.productId) ?? "0") : "0",
         cpoId:                cpoMatch?.cpoId                 ?? null,
@@ -751,7 +753,7 @@ export async function getSoItemsForPr(soId: string) {
         editedBy:             i.editedBy ?? null,
         setGroupId:           i.setGroupId ?? null,
         setGroupLabel:        i.setGroupLabel ?? null,
-        setQty:               i.setQty ?? null,
+        setQty:               i.setGroupId ? "1" : null, // the quantity above is already for every set
       };
     }),
   };

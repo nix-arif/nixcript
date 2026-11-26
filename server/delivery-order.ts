@@ -36,6 +36,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { getNumberingConfig } from "@/server/document-numbering";
 import { buildDocumentNo } from "@/lib/document-numbering";
 import { nextFreeDocNo, isDocNoTakenInGroup } from "@/lib/document-number-group";
+import { soLineQty } from "@/lib/sales-order/set-qty";
 import { createApprovedMovement, adjustReservation } from "@/lib/inventory/create-movement";
 import { LOAN_PURPOSE, MOVEMENT_TYPE, REF_TYPE, isLendable } from "@/lib/inventory/constants";
 import { cleanCustomerView, type CustomerView } from "@/lib/delivery/customer-view";
@@ -216,7 +217,7 @@ export type SoItemRemaining = {
 // Called after creating a DO — if every SO item is fully covered, closes the SO.
 async function checkAndFulfillSo(soId: string, orgId: string): Promise<void> {
   const soItems = await db
-    .select({ id: salesOrderItem.id, qty: salesOrderItem.qty })
+    .select({ id: salesOrderItem.id, qty: salesOrderItem.qty, setGroupId: salesOrderItem.setGroupId, setQty: salesOrderItem.setQty })
     .from(salesOrderItem)
     .where(eq(salesOrderItem.salesOrderId, soId));
 
@@ -243,7 +244,7 @@ async function checkAndFulfillSo(soId: string, orgId: string): Promise<void> {
 
   const allFulfilled = soItems.every((item) => {
     const delivered = deliveredMap.get(item.id) ?? 0;
-    return delivered >= parseFloat(item.qty ?? "0");
+    return delivered >= soLineQty(item); // × the number of sets
   });
 
   if (allFulfilled) {
@@ -268,6 +269,8 @@ export async function getSoRemainingItems(soId: string): Promise<SoItemRemaining
       qty: salesOrderItem.qty,
       uom: salesOrderItem.uom,
       sourceCustomerPoId: salesOrderItem.sourceCustomerPoId,
+      setGroupId: salesOrderItem.setGroupId,
+      setQty: salesOrderItem.setQty,
     })
     .from(salesOrderItem)
     .innerJoin(salesOrder, eq(salesOrder.id, salesOrderItem.salesOrderId))
@@ -296,7 +299,7 @@ export async function getSoRemainingItems(soId: string): Promise<SoItemRemaining
   const deliveredMap = new Map(deliveredRows.map((r) => [r.soItemId as string, parseFloat(r.total)]));
 
   return items.map((item) => {
-    const originalQty = parseFloat(item.qty ?? "0");
+    const originalQty = soLineQty(item); // × the number of sets
     const deliveredQty = deliveredMap.get(item.id) ?? 0;
     const remainingQty = Math.max(0, originalQty - deliveredQty);
     return {
