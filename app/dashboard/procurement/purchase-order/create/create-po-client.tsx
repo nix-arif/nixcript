@@ -496,7 +496,8 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     setPdfUploading(true);
     try {
       const { key, uploadUrl } = await getPoSupplierQuotationUploadUrl(file.name);
-      await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": "application/pdf" } });
+      const res = await fetch(uploadUrl, { method: "PUT", body: file, headers: { "Content-Type": "application/pdf" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setPdfKey(key);
       toast.success("Supplier quotation PDF attached");
     } catch {
