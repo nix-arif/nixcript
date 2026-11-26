@@ -3,7 +3,8 @@
 // A document's short history, shown on hover over its row in a list (large
 // screens only: no hover on touch, and too cramped on small ones). The events
 // are loaded once, the first time the card opens. Used by the Customer PO list
-// (cpo-trail-hover.tsx) and the Sales Order list (so-trail-hover.tsx).
+// (cpo-trail-hover.tsx), the Sales Order list (so-trail-hover.tsx) and the
+// Supplier PO list (po-trail-hover.tsx).
 
 import { useState, useSyncExternalStore } from "react";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";

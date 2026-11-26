@@ -2197,3 +2197,89 @@ export async function cancelPurchaseOrder(id: string): Promise<{ ok: true } | { 
   revalidatePath("/dashboard/procurement/purchase-order");
   return { ok: true };
 }
+
+// ── Hover history (list cards) ──────────────────────────────────────────────
+
+export type PurchaseOrderHistory = {
+  po: {
+    poNo: string | null; prNo: string | null; status: string; grandTotal: string; currency: string;
+    supplierName: string | null; createdAt: Date; createdByName: string | null;
+    approvedAt: Date | null; approvedByName: string | null; updatedAt: Date;
+  };
+  cpos: { customerPoNo: string; receivedDate: Date | null; createdAt: Date }[];
+  so: { soNo: string; status: string; createdAt: Date } | null;
+  pr: { prNo: string; status: string; createdAt: Date } | null;
+  /** The sibling company's SO raised from this PO (intercompany) */
+  intercompanySos: { soNo: string; status: string; createdAt: Date; orgName: string | null }[];
+  packingLists: { packingListNo: string; status: string; createdAt: Date; expectedDate: Date | null }[];
+  goodsReceipts: { grNo: string; status: string; receivedDate: Date; createdAt: Date }[];
+};
+
+export async function getPurchaseOrderHistory(poId: string): Promise<PurchaseOrderHistory | null> {
+  const { orgId } = await requireAccess("purchase-order:read");
+  return purchaseOrderHistoryIn([orgId], poId);
+}
+
+// Same, for the centralized PO list: any org the caller's owner holds.
+export async function getPurchaseOrderHistoryCentralized(poId: string): Promise<PurchaseOrderHistory | null> {
+  const { orgId } = await requireAccess("purchase-order:read:centralized");
+  return purchaseOrderHistoryIn(await getOwnerOrgIds(orgId), poId);
+}
+
+// The PO must belong to one of `allowedOrgIds`; everything else is read from the PO's own org
+// (except the intercompany SO, which lives in the sibling company).
+async function purchaseOrderHistoryIn(allowedOrgIds: string[], poId: string): Promise<PurchaseOrderHistory | null> {
+  const [po] = await db.select().from(purchaseOrder).where(and(eq(purchaseOrder.id, poId), inArray(purchaseOrder.organizationId, allowedOrgIds)));
+  if (!po) return null;
+  const orgId = po.organizationId;
+
+  const userIds = [po.createdBy, po.approvedBy].filter((v): v is string => !!v);
+  const [users, cpos, pr, icSos, pls, grs] = await Promise.all([
+    db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, userIds)),
+    db.select({ customerPoNo: customerPurchaseOrder.customerPoNo, receivedDate: customerPurchaseOrder.receivedDate, createdAt: customerPurchaseOrder.createdAt })
+      .from(purchaseOrderCustomerPo)
+      .innerJoin(customerPurchaseOrder, eq(customerPurchaseOrder.id, purchaseOrderCustomerPo.customerPoId))
+      .where(eq(purchaseOrderCustomerPo.purchaseOrderId, poId)),
+    po.purchaseRequisitionId
+      ? db.select({ prNo: purchaseRequisition.prNo, status: purchaseRequisition.status, createdAt: purchaseRequisition.createdAt, salesOrderId: purchaseRequisition.salesOrderId })
+          .from(purchaseRequisition)
+          .where(and(eq(purchaseRequisition.id, po.purchaseRequisitionId), eq(purchaseRequisition.organizationId, orgId)))
+          .then((r) => r[0] ?? null)
+      : Promise.resolve(null),
+    db.select({ soNo: salesOrder.soNo, status: salesOrder.status, createdAt: salesOrder.createdAt, orgName: organization.name })
+      .from(salesOrder)
+      .leftJoin(organization, eq(organization.id, salesOrder.organizationId))
+      .where(eq(salesOrder.sourcePurchaseOrderId, poId)),
+    db.selectDistinct({ id: packingList.id, packingListNo: packingList.packingListNo, status: packingList.status, createdAt: packingList.createdAt, expectedDate: packingList.expectedDate })
+      .from(packingListItem)
+      .innerJoin(packingList, eq(packingList.id, packingListItem.packingListId))
+      .where(and(eq(packingListItem.purchaseOrderId, poId), eq(packingList.organizationId, orgId))),
+    db.select({ grNo: goodsReceipt.grNo, status: goodsReceipt.status, receivedDate: goodsReceipt.receivedDate, createdAt: goodsReceipt.createdAt })
+      .from(goodsReceipt)
+      .where(and(eq(goodsReceipt.purchaseOrderId, poId), eq(goodsReceipt.organizationId, orgId))),
+  ]);
+  const nameOf = (id: string | null) => users.find((u) => u.id === id)?.name ?? null;
+
+  // The PO's own SO, else its PR's (an older edit could drop the PO's link)
+  const soId = po.salesOrderId ?? pr?.salesOrderId ?? null;
+  const so = soId
+    ? await db.select({ soNo: salesOrder.soNo, status: salesOrder.status, createdAt: salesOrder.createdAt })
+        .from(salesOrder).where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId))).then((r) => r[0] ?? null)
+    : null;
+
+  return {
+    po: {
+      poNo: po.poNo, prNo: po.prNo, status: po.status, grandTotal: po.grandTotal, currency: po.currency,
+      supplierName: po.supplierSnapshot?.name ?? null,
+      createdAt: po.createdAt, createdByName: nameOf(po.createdBy),
+      approvedAt: po.approvedAt, approvedByName: nameOf(po.approvedBy),
+      updatedAt: po.updatedAt,
+    },
+    cpos,
+    so,
+    pr: pr ? { prNo: pr.prNo, status: pr.status, createdAt: pr.createdAt } : null,
+    intercompanySos: icSos,
+    packingLists: pls.map(({ packingListNo, status, createdAt, expectedDate }) => ({ packingListNo, status, createdAt, expectedDate })),
+    goodsReceipts: grs,
+  };
+}

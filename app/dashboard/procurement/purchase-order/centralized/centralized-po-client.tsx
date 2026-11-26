@@ -1,6 +1,7 @@
 "use client";
 
 import { PoLegend } from "../_shared/po-legend";
+import { PoTrailHover } from "../po-trail-hover";
 import { PackingListBadges } from "../_shared/packing-list-badges";
 import { ReceivedBadge } from "../_shared/received-badge";
 import { useState } from "react";
@@ -224,8 +225,8 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
           {filtered.map((p) => {
             const snap = p.supplierSnapshot as { name?: string } | null;
             return (
+              <PoTrailHover key={p.id} id={p.id} poNo={p.poNo ?? p.prNo ?? "Supplier PO"} centralized>
               <div
-                key={p.id}
                 className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                 onClick={() => router.push(`/dashboard/procurement/purchase-order/centralized/${p.id}`)}
               >
@@ -312,6 +313,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                   </div>
                 </div>
               </div>
+              </PoTrailHover>
             );
           })}
         </div>

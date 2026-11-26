@@ -1,6 +1,7 @@
 "use client";
 
 import { PoLegend } from "./_shared/po-legend";
+import { PoTrailHover } from "./po-trail-hover";
 import { PackingListBadges } from "./_shared/packing-list-badges";
 import { ReceivedBadge } from "./_shared/received-badge";
 import { useEffect, useState } from "react";
@@ -292,8 +293,8 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
             {filtered.map((o) => {
               const snap = o.supplierSnapshot as any;
               return (
+                <PoTrailHover key={o.id} id={o.id} poNo={o.poNo ?? o.prNo ?? "Supplier PO"}>
                 <div
-                  key={o.id}
                   className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
                   onClick={() => router.push(`/dashboard/procurement/purchase-order/${o.id}`)}
                 >
@@ -376,6 +377,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                     <PackageIcon className="w-3.5 h-3.5 text-muted-foreground/40 shrink-0" />
                   </div>
                 </div>
+                </PoTrailHover>
               );
             })}
           </div>
