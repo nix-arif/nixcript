@@ -273,7 +273,8 @@ function calcLine(item: LineItem): LineItem {
 }
 
 function calcTotals(items: LineItem[], sstPct: string, disc: OverallDiscount) {
-  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0"), 0);
+  // a set's lines are priced for one set: × the number of sets
+  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0") * (i.setGroupId ? parseFloat(i.setQty || "1") || 1 : 1), 0);
   const overallDiscAmt = overallDiscountAmount(subtotal, disc);
   const afterDisc = subtotal - overallDiscAmt;
   const sstAmt = (afterDisc * (parseFloat(sstPct) || 0)) / 100;
@@ -1767,7 +1768,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
                     const perSetTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
                     const groupTotal = perSetTotal * setQtyNum;
-                    const perSetPrice = perSetTotal / setQtyNum;
+                    const perSetPrice = perSetTotal; // the set's lines are priced for one set
                     rows.push(
                       <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
                         <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>

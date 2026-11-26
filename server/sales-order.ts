@@ -892,6 +892,11 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
       deliveryAddress: po.deliveryAddress ?? undefined,
       sourceOrganizationId: callerOrgId,
       sourcePurchaseOrderId: poId,
+      // the PO's own totals: the SO's lines carry the same prices
+      subtotal: po.subtotal ?? undefined,
+      sst: po.sst ?? undefined,
+      sstPct: po.sstPct ?? undefined,
+      grandTotal: po.grandTotal ?? undefined,
       items: poItems.map((item) => ({
         rowNo: item.rowNo,
         productId: (item.productCode && targetProductId.get(item.productCode.trim())) || undefined,

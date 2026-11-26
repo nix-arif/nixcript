@@ -661,9 +661,10 @@ export function SalesOrderDetailClient({
                         // Set group header
                         if ((item as any).setGroupId && renderItems.findIndex((i) => (i as any).setGroupId === (item as any).setGroupId) === idx) {
                           const groupItems = order.items.filter((i) => (i as any).setGroupId === (item as any).setGroupId);
-                          const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                          // the set's lines are priced for one set
+                          const perSetPrice = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
                           const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
-                          const perSetPrice = groupTotal / setQtyNum;
+                          const groupTotal = perSetPrice * setQtyNum;
                           rows.push(
                             <tr key={`grp-${(item as any).setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
                               <td colSpan={colCount} className={`pl-4 pr-4 py-1.5 ${color?.border ?? ""}`}>

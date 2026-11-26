@@ -428,13 +428,14 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
         const setQty     = Number(it.setQty ?? 1);
         const displayQty = setQty * sets;
-        const pricePerSet = setQty > 0 ? setTotal / setQty : 0;
+        // the set's lines are priced for one set
+        const pricePerSet = setTotal;
         const _lbl = it.setGroupLabel ?? "Set";
         renderItems.push({
           kind: "setHeader",
           label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl,
           qty: displayQty,
-          setTotal: setTotal * sets,
+          setTotal: setTotal * setQty * sets,
           pricePerSet,
           rowH: SET_HDR_H,
         });

@@ -40,3 +40,25 @@ export function lineTotalsWithSetPrice<T extends SetPriceFields>(
     return setPriceValue(item) * Number(item.setQty ?? 1);
   });
 }
+
+/**
+ * Sales Order lines keep no set price: every line's total is qty × unit price, for ONE set (the
+ * SO multiplies by the number of sets itself). So a priced set (from a quotation or Customer PO)
+ * is carried as the price of one set in the unit price of its first line, and 0 on the set's
+ * other lines. Other lines are unchanged.
+ */
+export function bookSetPriceAsUnitPrice<
+  T extends SetPriceFields & { qty?: string | null; unitPrice?: string | null; discountPct?: string | null },
+>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.map((item) => {
+    if (!isSetPriced(item)) return item;
+    const gid = item.setGroupId as string;
+    if (seen.has(gid)) return { ...item, unitPrice: "0", discountPct: "0" };
+    seen.add(gid);
+    const qty = Number(item.qty || 1) || 1;
+    // enough decimals that qty × unit price comes back to the set price
+    const unit = Number((setPriceValue(item) / qty).toFixed(6)).toString();
+    return { ...item, unitPrice: unit, discountPct: "0" };
+  });
+}
