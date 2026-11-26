@@ -129,8 +129,11 @@ export function EditPurchaseOrderClient({
   });
 
   // Linked SO
+  // The picker only lists SOs with items still to order, which leaves out the SO this PO already
+  // covers. Keep the PO's own SO anyway, so saving doesn't drop the link.
   const existingSo = order.salesOrderId
-    ? approvedSos.find((s) => s.id === order.salesOrderId) ?? null
+    ? approvedSos.find((s) => s.id === order.salesOrderId)
+      ?? (order.salesOrderNo ? { id: order.salesOrderId, soNo: order.salesOrderNo, customerName: null } : null)
     : null;
   const [selectedSo, setSelectedSo] = useState<ApprovedSo | null>(existingSo);
   const [soSearch, setSoSearch] = useState("");
