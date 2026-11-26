@@ -1351,9 +1351,11 @@ export function SalesOrderDetailClient({
                 <span className="text-muted-foreground">Subtotal</span>
                 <span className="tabular-nums">{fmt(order.subtotal)}</span>
               </div>
-              {parseFloat(order.overallDiscountPct ?? "0") > 0 && (
+              {parseFloat(order.overallDiscountAmt ?? "0") > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Discount ({order.overallDiscountPct}%)</span>
+                  <span className="text-muted-foreground">
+                    {parseFloat(order.overallDiscountPct ?? "0") > 0 ? `Discount (${order.overallDiscountPct}%)` : "Special discount"}
+                  </span>
                   <span className="tabular-nums text-muted-foreground">−{fmt(order.overallDiscountAmt)}</span>
                 </div>
               )}

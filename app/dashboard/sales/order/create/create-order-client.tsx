@@ -55,6 +55,8 @@ import { isNotAsSetLabel, sourceQuotationNo, titleBySet } from "@/lib/customer-p
 import { itemCustomer } from "@/lib/customer-po/customer-match";
 import { applySoSheet, downloadSoItemsSheet, readSoItemsSheet } from "@/lib/sales-order/items-sheet";
 import { uid } from "@/lib/uid";
+import { NO_DISCOUNT, discountFromQuotations, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
+import { OverallDiscountInput } from "../overall-discount-input";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
 
@@ -72,6 +74,9 @@ type LinkedQuotation = {
   deliveryDate?: string | null;
   deliveryAddress?: string | null;
   _fromCpoId?: string; // auto-linked from a CPO
+  // Overall discount on the quotation — only known when it was picked directly
+  discountPct?: string;
+  discountAmt?: string;
 };
 
 type LinkedCpo = {
@@ -292,9 +297,9 @@ function calcLine(item: LineItem): LineItem {
   return { ...item, discountAmt: dAmt.toFixed(2), totalPrice: (gross - dAmt).toFixed(2) };
 }
 
-function calcTotals(items: LineItem[], sstPct: string, discPct: string) {
+function calcTotals(items: LineItem[], sstPct: string, disc: OverallDiscount) {
   const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0"), 0);
-  const overallDiscAmt = (subtotal * (parseFloat(discPct) || 0)) / 100;
+  const overallDiscAmt = overallDiscountAmount(subtotal, disc);
   const afterDisc = subtotal - overallDiscAmt;
   const sstAmt = (afterDisc * (parseFloat(sstPct) || 0)) / 100;
   return { subtotal, overallDiscAmt, sstAmt, grand: afterDisc + sstAmt };
@@ -380,11 +385,18 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
   // Pricing
   const [sstPct, setSstPct] = useState("0");
-  const [overallDiscPct, setOverallDiscPct] = useState("0");
+  // Overall discount follows the linked quotations until the user types their own
+  const [manualDiscount, setManualDiscount] = useState<OverallDiscount | null>(null);
 
   // Items — useId gives a stable ID consistent between SSR and client hydration
   const initialItemId = useId();
   const [items, setItems] = useState<LineItem[]>(() => [{ ...newLine(1), _key: initialItemId }]);
+  // Quotations picked directly carry their overall discount (CPO-linked ones don't)
+  const discountQuotations = linkedQuotations.flatMap((q) =>
+    q.discountPct !== undefined ? [{ id: q.id, discountPct: q.discountPct, discountAmt: q.discountAmt ?? "0" }] : [],
+  );
+  const overallDiscount: OverallDiscount =
+    manualDiscount ?? (discountQuotations.length > 0 ? discountFromQuotations(items, discountQuotations) : NO_DISCOUNT);
   // Descriptions follow the product database (by design code for OEM items, else by code)
   useDbDescriptions(items, setItems, { showSourcing, syncOnLoad: true });
   const itemsRef = useRef(items);
@@ -834,7 +846,14 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         customerId: qt.customerId ?? null,
         customerSnapshot: qt.customerSnapshot ?? null,
         salesPersonName: qt.salesPersonName ?? null,
+        discountPct: qt.overallDiscountPct ?? "0",
+        discountAmt: qt.overallDiscountAmt ?? "0",
       }]);
+      setManualDiscount(null); // follow the quotations again now they've changed
+      // One SST rate applies to the whole SO; flag a quotation that used another
+      if (!isFirst && (parseFloat(qt.sstPct ?? "0") || 0) !== (parseFloat(sstPct) || 0)) {
+        toast.warning(`${qt.quotationNo} has SST ${qt.sstPct ?? 0}%, but this SO uses ${sstPct}%. Check the SST in Pricing.`, { duration: 10000 });
+      }
       // Auto-fill per-quotation sales person for urgent/proforma SO
       if (soType !== "standard" && qt.salesPersonName && !qtSalesPersons[qt.id]?.length) {
         const m = members.find((x) => (x.name ?? x.email)?.toLowerCase() === qt.salesPersonName!.toLowerCase());
@@ -888,7 +907,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       // Auto-fill header fields from the first quotation only
       if (isFirst) {
         setSstPct(qt.sstPct ?? "0");
-        setOverallDiscPct(qt.overallDiscountPct ?? "0");
         if (qt.notes && !notes) setNotes(qt.notes);
       }
 
@@ -939,6 +957,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
   function removeLinkedQuotation(id: string) {
     setLinkedQuotations((prev) => prev.filter((q) => q.id !== id));
+    setManualDiscount(null);
   }
 
   // ── Set / group helpers ─────────────────────────────────────────────────────
@@ -1352,7 +1371,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
     const { subtotal, overallDiscAmt, sstAmt, grand } = soType === "proforma"
       ? { subtotal: 0, overallDiscAmt: 0, sstAmt: 0, grand: 0 }
-      : calcTotals(items, sstPct, overallDiscPct);
+      : calcTotals(items, sstPct, overallDiscount);
     return createSalesOrder({
       soType,
       proformaReason: soType === "proforma" ? proformaReason : undefined,
@@ -1413,7 +1432,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         : ((linkedCpos[0]?.deliveryAddress || deliveryAddress) || undefined),
       notes: notes || undefined,
       subtotal: subtotal.toFixed(2),
-      overallDiscountPct: overallDiscPct,
+      overallDiscountPct: overallDiscount.mode === "pct" ? overallDiscount.pct : "0",
       overallDiscountAmt: overallDiscAmt.toFixed(2),
       sstPct,
       sst: sstAmt.toFixed(2),
@@ -1480,7 +1499,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     }
   }
 
-  const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
+  const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
   const allCompanies = selectedCustomer?.companies ?? [];
   const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
 
@@ -3057,18 +3076,21 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                 <span>Subtotal</span>
                 <span className="tabular-nums font-mono">{fmt(subtotal)}</span>
               </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground shrink-0">Overall disc.</span>
-                <div className="flex items-center gap-1">
-                  <Input
-                    value={overallDiscPct}
-                    onChange={(e) => setOverallDiscPct(e.target.value)}
-                    className="h-7 w-16 text-xs text-right"
-                  />
-                  <span className="text-muted-foreground text-xs">%</span>
-                </div>
-                <span className="tabular-nums font-mono text-muted-foreground">−{fmt(overallDiscAmt)}</span>
-              </div>
+              <OverallDiscountInput
+                value={overallDiscount}
+                onChange={setManualDiscount}
+                amount={overallDiscAmt}
+                fmt={fmt}
+                hint={
+                  manualDiscount
+                    ? undefined
+                    : discountQuotations.length > 1 && overallDiscount.mode === "fixed"
+                      ? `Combined from ${discountQuotations.length} quotations`
+                      : discountQuotations.length > 0 && overallDiscAmt > 0
+                        ? "From quotation"
+                        : undefined
+                }
+              />
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground shrink-0">SST</span>
                 <div className="flex items-center gap-1">

@@ -29,6 +29,8 @@ import { useDbDescriptions } from "@/lib/sales-order/use-db-descriptions";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import { uid } from "@/lib/uid";
+import { discountFromSaved, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
+import { OverallDiscountInput } from "../../overall-discount-input";
 import {
   ArrowLeftIcon,
   PlusIcon,
@@ -267,9 +269,9 @@ function calcLine(item: LineItem): LineItem {
   return { ...item, discountAmt: dAmt.toFixed(2), totalPrice: (gross - dAmt).toFixed(2) };
 }
 
-function calcTotals(items: LineItem[], sstPct: string, discPct: string) {
+function calcTotals(items: LineItem[], sstPct: string, disc: OverallDiscount) {
   const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0"), 0);
-  const overallDiscAmt = (subtotal * (parseFloat(discPct) || 0)) / 100;
+  const overallDiscAmt = overallDiscountAmount(subtotal, disc);
   const afterDisc = subtotal - overallDiscAmt;
   const sstAmt = (afterDisc * (parseFloat(sstPct) || 0)) / 100;
   return { subtotal, overallDiscAmt, sstAmt, grand: afterDisc + sstAmt };
@@ -428,7 +430,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
   // ── Pricing ─────────────────────────────────────────────────────────────────
   const [sstPct, setSstPct] = useState(order.sstPct ?? "0");
-  const [overallDiscPct, setOverallDiscPct] = useState(order.overallDiscountPct ?? "0");
+  const [overallDiscount, setOverallDiscount] = useState<OverallDiscount>(() =>
+    discountFromSaved(order.overallDiscountPct, order.overallDiscountAmt),
+  );
 
   // ── Items ───────────────────────────────────────────────────────────────────
   // (hook is wired right after the items state, below)
@@ -848,7 +852,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
     setSaving(true);
     try {
-      const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
+      const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
       const finalDeliveryDate = linkedCpos.length > 0
         ? (() => { const d = linkedCpos[0]?.deliveryDate; return d ? new Date(d) : undefined; })()
         : deliveryDate ? new Date(deliveryDate) : undefined;
@@ -891,7 +895,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           urgentAuthNotes: urgentAuthNotes.trim() || undefined,
         }),
         subtotal: subtotal.toFixed(2),
-        overallDiscountPct: overallDiscPct,
+        overallDiscountPct: overallDiscount.mode === "pct" ? overallDiscount.pct : "0",
         overallDiscountAmt: overallDiscAmt.toFixed(2),
         sstPct,
         sst: sstAmt.toFixed(2),
@@ -928,7 +932,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
     }
   }
 
-  const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscPct);
+  const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
   const allCompanies = selectedCustomer?.companies ?? [];
   const showCpoColumn = linkedCpos.length > 1;
   const cpoLinkedCustomers = linkedCpos.length > 0
@@ -2066,14 +2070,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                 <span>Subtotal</span>
                 <span className="tabular-nums font-mono">{fmt(subtotal)}</span>
               </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground shrink-0">Overall disc.</span>
-                <div className="flex items-center gap-1">
-                  <Input value={overallDiscPct} onChange={(e) => setOverallDiscPct(e.target.value)} className="h-7 w-16 text-xs text-right" />
-                  <span className="text-muted-foreground text-xs">%</span>
-                </div>
-                <span className="tabular-nums font-mono text-muted-foreground">−{fmt(overallDiscAmt)}</span>
-              </div>
+              <OverallDiscountInput value={overallDiscount} onChange={setOverallDiscount} amount={overallDiscAmt} fmt={fmt} />
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground shrink-0">SST</span>
                 <div className="flex items-center gap-1">
