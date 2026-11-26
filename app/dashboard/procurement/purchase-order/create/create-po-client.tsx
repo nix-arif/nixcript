@@ -4,9 +4,14 @@ import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useAutoSave, useUserInteracted } from "@/lib/use-auto-save";
+import { AutoSaveStatus } from "@/components/auto-save-status";
 import * as XLSX from "xlsx";
 import {
   createPurchaseOrder,
+  updatePurchaseOrder,
+  confirmPurchaseOrder,
+  deletePurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   type PrForPoConversion,
@@ -216,6 +221,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   const pdfRef = useRef<HTMLInputElement>(null);
 
   const [saving, setSaving] = useState(false);
+  const interacted = useUserInteracted();
 
   const committedRef = useRef(false);
   const itemsRef     = useRef(items);
@@ -514,22 +520,21 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     if (pdfRef.current) pdfRef.current.value = "";
   }
 
-  async function buildAndCreate() {
-    if (!supplierId) { toast.error("Supplier is required"); return null; }
-    if (!poDate) { toast.error("PO date is required"); return null; }
-    if (poDate > today) { toast.error("The PO date cannot be after today"); return null; }
-    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
-    if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return null; }
-    if (useManualPoNo && !manualPoNo.trim()) { toast.error("Enter the existing PO number, or turn that off to auto-generate one"); return null; }
-    if (showSourcing) {
+  // The PO as it would be saved, or why it can't be yet. strict: issuing it (not a draft).
+  function buildInput(strict: boolean): { input: Parameters<typeof createPurchaseOrder>[0]; error?: undefined } | { input?: undefined; error: string } {
+    if (!supplierId) { return { error: "Supplier is required" }; }
+    if (!poDate) { return { error: "PO date is required" }; }
+    if (poDate > today) { return { error: "The PO date cannot be after today" }; }
+    if (!items.some((i) => i.description || i.productCode)) { return { error: "Add at least one item" }; }
+    if (items.some((i) => i._imageUploading)) { return { error: "Please wait for image uploads to finish" }; }
+    if (strict && useManualPoNo && !manualPoNo.trim()) { return { error: "Enter the existing PO number, or turn that off to auto-generate one" }; }
+    if (strict && showSourcing) {
       const realItems = items.filter((i) => i.description || i.productCode);
       if (realItems.some((i) => !i.sourcingType)) {
-        toast.error("Pick Trading or OEM for every item");
-        return null;
+        return { error: "Pick Trading or OEM for every item" };
       }
       if (realItems.some((i) => i.sourcingType === "oem" && (!i.designBrandName?.trim() || !i.designBrandCode?.trim() || !i.privateLabelCode?.trim()))) {
-        toast.error("Fill in Design Brand, Design Code and Emboss Code for every OEM item");
-        return null;
+        return { error: "Fill in Design Brand, Design Code and Emboss Code for every OEM item" };
       }
     }
 
@@ -540,7 +545,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       ? [...new Set(items.map((i) => i._cpoId).filter(Boolean) as string[])]
       : [];
 
-    return createPurchaseOrder({
+    return { input: {
       purchaseRequisitionId: prData?.id,
       supplierId,
       poDate: poDate || undefined,
@@ -559,7 +564,58 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       deliveryAddress: deliveryAddress || undefined,
       manualPoNo: !isPrMode && useManualPoNo ? manualPoNo.trim() : undefined,
       items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, ...rest }) => rest),
-    });
+    } };
+  }
+
+
+  // ── Auto-save: a draft PO (no number yet) is created the first time the form can be saved ──
+  const draftRef = useRef<{ id: string; poNo: string | null } | null>(null);
+  const [draft, setDraft] = useState<{ id: string; poNo: string | null } | null>(null);
+  async function saveDraft(input: Parameters<typeof createPurchaseOrder>[0]): Promise<{ id: string; poNo: string | null }> {
+    if (draftRef.current) {
+      await updatePurchaseOrder({ ...input, id: draftRef.current.id });
+    } else {
+      const po = await createPurchaseOrder({ ...input, asDraft: true, manualPoNo: undefined });
+      draftRef.current = { id: po.id, poNo: po.poNo };
+      setDraft(draftRef.current);
+    }
+    committedRef.current = true; // the line images belong to the draft now
+    return draftRef.current;
+  }
+  const autoInput = buildInput(false);
+  const autoSave = useAutoSave({
+    value: autoInput.input ?? null,
+    enabled: interacted && !saving,
+    loadedSaved: false,
+    save: async (input) => { await saveDraft(input); },
+  });
+
+  async function buildAndCreate() {
+    const r = buildInput(true);
+    if (r.error !== undefined) { toast.error(r.error); return null; }
+    await autoSave.flush(); // nothing in flight: no second draft
+    if (!draftRef.current) return createPurchaseOrder(r.input);
+    // the auto-saved draft: save what's on screen, then issue it
+    await updatePurchaseOrder({ ...r.input, id: draftRef.current.id });
+    autoSave.markSaved();
+    return confirmPurchaseOrder(draftRef.current.id, r.input.manualPoNo);
+  }
+
+  async function handleDiscardDraft() {
+    const d = draftRef.current;
+    if (!d) { router.push(backHref); return; }
+    if (!confirm(`Discard the draft ${d.poNo ?? ""}? It will be deleted.`.replace("  ", " "))) return;
+    setSaving(true);
+    try {
+      await autoSave.flush();
+      const res = await deletePurchaseOrder(d.id);
+      if (!res.ok) { toast.error(res.error); return; }
+      committedRef.current = false; // its images go with it
+      toast.success("Draft discarded");
+      router.push(backHref);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleCreatePo() {
@@ -596,9 +652,12 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
             : "Issue a purchase order directly to a supplier"
         }
         action={
-          <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-2">
-            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
-          </Button>
+          <div className="flex items-center gap-3">
+            <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={draft?.poNo} waiting={interacted ? autoInput.error : null} />
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, backHref)} className="gap-2">
+              <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+          </div>
         }
       />
 
@@ -1031,7 +1090,16 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
           <Button onClick={handleCreatePo} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
             {saving ? "Creating…" : "Create Supplier PO"}
           </Button>
-          <Button variant="outline" onClick={() => router.push(backHref)}>Cancel</Button>
+          {draft ? (
+            <Button variant="outline" onClick={handleDiscardDraft} disabled={saving} className="text-destructive hover:text-destructive">
+              Discard draft
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={() => router.push(backHref)}>Cancel</Button>
+          )}
+        </div>
+        <div className="-mt-6 pb-8">
+          <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={draft?.poNo} waiting={interacted ? autoInput.error : null} />
         </div>
       </div>
     </div>

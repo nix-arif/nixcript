@@ -1035,6 +1035,13 @@ async function applySalesOrderUpdate(
       urgentAuthDate: input.urgentAuthDate !== undefined ? (input.urgentAuthDate ?? null) : existing.urgentAuthDate,
       urgentPoExpectedBy: input.urgentPoExpectedBy !== undefined ? (input.urgentPoExpectedBy ?? null) : existing.urgentPoExpectedBy,
       urgentAuthNotes: input.urgentAuthNotes !== undefined ? (input.urgentAuthNotes ?? null) : existing.urgentAuthNotes,
+      // the order type can still change while a draft is being created (the create form auto-saves)
+      ...(input.soType !== undefined && {
+        soType: input.soType,
+        proformaReason: input.soType === "proforma" ? (input.proformaReason ?? null) : null,
+        originalSoId: input.soType === "proforma" ? (input.originalSoId ?? null) : null,
+        originalSoNo: input.soType === "proforma" ? (input.originalSoNo ?? null) : null,
+      }),
       status: input.status ?? existing.status,
     })
     .where(eq(salesOrder.id, input.id))

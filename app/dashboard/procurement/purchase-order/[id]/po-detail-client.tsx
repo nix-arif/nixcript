@@ -4,6 +4,7 @@ import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { pricingMethodLabel } from "@/lib/intercompany/methods";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { isDraftRef } from "@/lib/draft-ref";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import {
@@ -457,7 +458,7 @@ export function PurchaseOrderDetailClient({
                 <PencilIcon className="w-3.5 h-3.5" /> Edit
               </Button>
             )}
-            {isOwner && !order.approvedAt && (status === "draft" || status === "cancelled") && !deleteBlocker && (
+            {(isOwner || (isDraft && order.createdBy === currentUserId && isDraftRef(order.poNo))) && !order.approvedAt && (status === "draft" || status === "cancelled") && !deleteBlocker && (
               <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:text-destructive" disabled={deleting} onClick={handleDelete}>
                 <Trash2Icon className="w-3.5 h-3.5" /> Delete
               </Button>

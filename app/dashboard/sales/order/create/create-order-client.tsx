@@ -6,10 +6,15 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createSalesOrder,
+  updateSalesOrder,
+  deleteSalesOrder,
   submitSalesOrder,
   searchConfirmedSalesOrders,
   type SalesOrderItemInput,
+  type CreateSalesOrderInput,
 } from "@/server/sales-order";
+import { useAutoSave, useUserInteracted } from "@/lib/use-auto-save";
+import { AutoSaveStatus } from "@/components/auto-save-status";
 import { getProductsByCode, searchProductsByDesignCode } from "@/server/inventory";
 import { getCustomers, getCustomer } from "@/server/customer";
 import {
@@ -421,6 +426,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   useEffect(() => { itemsRef.current = items; }, [items]);
 
   const [saving, setSaving] = useState(false);
+  const interacted = useUserInteracted();
   const tableRef = useRef<HTMLTableElement>(null);
 
   // ── Pre-select CPOs from props on mount ─────────────────────────────────────
@@ -634,7 +640,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       const data = await getCustomerPoForSoCreate(cpoId);
       if (!data) return;
       // a CPO belongs to at most one SO
-      if (data.linkedSo && data.linkedSo.status !== "cancelled") {
+      // (its own auto-saved draft doesn't count: removing and re-adding the CPO here is fine)
+      if (data.linkedSo && data.linkedSo.status !== "cancelled" && data.linkedSo.id !== draftRef.current?.id) {
         toast.error(`${data.customerPoNo} is already on sales order ${data.linkedSo.soNo} — a customer PO can only be on one sales order`);
         return;
       }
@@ -1337,64 +1344,56 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   // strict = true for "Create & Submit" (enforces sourcing/OEM fields before
   // the order leaves draft); a plain "Save as Draft" skips those two checks
   // so an incomplete order can still be saved and finished later.
-  async function buildAndCreate(strict: boolean) {
+  function buildInput(strict: boolean): { input: CreateSalesOrderInput; error?: undefined } | { input?: undefined; error: string } {
     if (linkedQuotations.length === 0) {
-      toast.error("Please link at least one quotation");
-      return null;
+      return { error: "Please link at least one quotation" };
     }
     if (soType === "standard" && linkedCpos.length === 0) {
-      toast.error("Please link at least one Customer PO");
-      return null;
+      return { error: "Please link at least one Customer PO" };
     }
     if (soType === "urgent" && !urgentAuthBy.trim()) {
-      toast.error("Please enter the name of the person who authorized this urgent order");
-      return null;
+      return { error: "Please enter the name of the person who authorized this urgent order" };
     }
     const primaryCustomerId = selectedCustomer?.id
       ?? linkedCpos.find((c) => c.customerId)?.customerId
       ?? linkedQuotations.find((q) => q.customerId)?.customerId
       ?? null;
-    if (!primaryCustomerId) { toast.error("Please select a customer"); return null; }
-    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return null; }
+    if (!primaryCustomerId) { return { error: "Please select a customer" }; }
+    if (!items.some((i) => i.description || i.productCode)) { return { error: "Add at least one item" }; }
     if (strict && showSourcing) {
       const missingSourcing = items.find((i) => (i.description || i.productCode) && !i.sourcingType);
       if (missingSourcing) {
-        toast.error(`Please select Trading or OEM sourcing for row ${missingSourcing.rowNo}`);
-        return null;
+        return { error: `Please select Trading or OEM sourcing for row ${missingSourcing.rowNo}` };
       }
       const missingOem = items.find((i) => i.sourcingType === "oem" && (
         !i.designBrandName?.trim() || !i.designBrandCode?.trim() || !i.privateLabelCode?.trim()
       ));
       if (missingOem) {
-        toast.error(`Please fill in Design Brand, Design Code and Emboss Code for row ${missingOem.rowNo}`);
-        return null;
+        return { error: `Please fill in Design Brand, Design Code and Emboss Code for row ${missingOem.rowNo}` };
       }
     }
     if (linkedCpos.length > 0) {
       for (const cpo of linkedCpos) {
         if (!cpoSalesPersons[cpo.id]?.length) {
-          toast.error(`Sales person required for ${cpo.customerPoNo}`);
-          return null;
+          return { error: `Sales person required for ${cpo.customerPoNo}` };
         }
       }
     } else if (soType !== "standard" && linkedQuotations.length > 0) {
       for (const qt of linkedQuotations) {
         if (!qtSalesPersons[qt.id]?.length) {
-          toast.error(`Sales person required for ${qt.quotationNo}`);
-          return null;
+          return { error: `Sales person required for ${qt.quotationNo}` };
         }
       }
     } else {
       if (salesPersons.length === 0) {
-        toast.error("Sales person is required");
-        return null;
+        return { error: "Sales person is required" };
       }
     }
 
     const { subtotal, overallDiscAmt, sstAmt, grand } = soType === "proforma"
       ? { subtotal: 0, overallDiscAmt: 0, sstAmt: 0, grand: 0 }
       : calcTotals(items, sstPct, overallDiscount);
-    return createSalesOrder({
+    return { input: {
       soType,
       proformaReason: soType === "proforma" ? proformaReason : undefined,
       originalSoId: soType === "proforma" && selectedOriginalSo ? selectedOriginalSo.id : undefined,
@@ -1486,7 +1485,30 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         designBrandSource: _designBrandSource ?? null,
         privateLabelSource: _privateLabelSource ?? null,
       })),
-    });
+    } };
+  }
+
+
+  // ── Auto-save: the draft is created the first time the form can be saved, then kept up to date ──
+  const draftRef = useRef<{ id: string; soNo: string } | null>(null);
+  const [draft, setDraft] = useState<{ id: string; soNo: string } | null>(null);
+  async function saveDraft(input: CreateSalesOrderInput): Promise<{ id: string; soNo: string }> {
+    if (draftRef.current) {
+      await updateSalesOrder({ ...input, id: draftRef.current.id });
+      return draftRef.current;
+    }
+    const so = await createSalesOrder(input);
+    draftRef.current = { id: so.id, soNo: so.soNo };
+    setDraft(draftRef.current);
+    return draftRef.current;
+  }
+  async function buildAndCreate(strict: boolean) {
+    const r = buildInput(strict);
+    if (r.error !== undefined) { toast.error(r.error); return null; }
+    await autoSave.flush(); // nothing in flight: no second draft
+    const so = await saveDraft(r.input);
+    autoSave.markSaved();
+    return so;
   }
 
   async function handleSave() {
@@ -1521,6 +1543,31 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     }
   }
 
+  // auto-save once the user has started (opening the form alone saves nothing)
+  const autoInput = buildInput(false);
+  const autoSave = useAutoSave({
+    value: autoInput.input ?? null,
+    enabled: interacted && !saving,
+    loadedSaved: false,
+    save: async (input) => { await saveDraft(input); },
+  });
+
+  async function handleDiscardDraft() {
+    const d = draftRef.current;
+    if (!d) { router.push("/dashboard/sales/order"); return; }
+    if (!confirm(`Discard the draft ${d.soNo}? It will be deleted.`)) return;
+    setSaving(true);
+    try {
+      await autoSave.flush();
+      const res = await deleteSalesOrder(d.id);
+      if (!res.ok) { toast.error(res.error); return; }
+      toast.success("Draft discarded");
+      router.push("/dashboard/sales/order");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
   const allCompanies = selectedCustomer?.companies ?? [];
   const linkedCustomers = linkedQuotations.filter((q) => q.customerId || q.customerSnapshot);
@@ -1550,9 +1597,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         title="New Sales Order"
         description="Create a new sales order"
         action={
-          <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/sales/order")} className="gap-2">
-            <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
-          </Button>
+          <div className="flex items-center gap-3">
+            <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={draft?.soNo} waiting={interacted ? autoInput.error : null} />
+            <Button variant="outline" size="sm" onClick={() => navigateBack(router, "/dashboard/sales/order")} className="gap-2">
+              <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
+            </Button>
+          </div>
         }
       />
 
@@ -3141,9 +3191,18 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           <Button variant="outline" onClick={handleSave} disabled={saving}>
             Save as Draft
           </Button>
-          <Button variant="outline" onClick={() => router.push("/dashboard/sales/order")}>
-            Cancel
-          </Button>
+          {draft ? (
+            <Button variant="outline" onClick={handleDiscardDraft} disabled={saving} className="text-destructive hover:text-destructive">
+              Discard draft
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={() => router.push("/dashboard/sales/order")}>
+              Cancel
+            </Button>
+          )}
+        </div>
+        <div className="-mt-6 pb-8">
+          <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={draft?.soNo} waiting={interacted ? autoInput.error : null} />
         </div>
       </div>
 

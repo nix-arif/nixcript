@@ -378,6 +378,10 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
     notes: input.notes ?? null,
     ...(input.prType !== undefined ? { prType: input.prType } : {}),
     ...(input.samplePurpose !== undefined ? { samplePurpose: input.samplePurpose } : {}),
+    // sent by the create form while it auto-saves the draft; the PR page's own edit leaves them
+    ...(input.customerPoId !== undefined ? { customerPoId: input.customerPoId, customerPoNo: input.customerPoNo ?? null } : {}),
+    ...(input.deliveryDate !== undefined ? { deliveryDate: input.deliveryDate } : {}),
+    ...(input.deliveryAddress !== undefined ? { deliveryAddress: input.deliveryAddress, deliveryAddressType: input.deliveryAddressType ?? null } : {}),
   }).where(eq(purchaseRequisition.id, input.id)).returning();
 
   await db.delete(purchaseRequisitionItem).where(eq(purchaseRequisitionItem.purchaseRequisitionId, input.id));

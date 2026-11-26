@@ -17,6 +17,8 @@ import {
   type PrItemInput,
 } from "@/server/purchase-requisition";
 import { getProductByCode } from "@/server/products";
+import { useAutoSave } from "@/lib/use-auto-save";
+import { AutoSaveStatus } from "@/components/auto-save-status";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -353,39 +355,57 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
     ));
   }
 
-  async function handleSaveEdit() {
+  // The PR as it would be saved, or why it can't be yet
+  function buildEditInput(): { input: Parameters<typeof updatePurchaseRequisition>[0]; error?: undefined } | { input?: undefined; error: string } {
     const validLines = lines.filter((l) => l.description || l.productCode);
-    if (validLines.length === 0) { toast.error("Add at least one item"); return; }
+    if (validLines.length === 0) return { error: "Add at least one item" };
+    return { input: {
+      id: pr.id,
+      salesOrderId: pr.salesOrderId ?? undefined,
+      salesOrderNo: pr.salesOrderNo ?? undefined,
+      notes: notes.trim() || undefined,
+      items: validLines.map((l) => ({
+        rowNo: l.rowNo,
+        productId: l.productId,
+        productCode: l.productCode,
+        description: l.description,
+        qty: l.qty,
+        uom: l.uom,
+        estimatedUnitCost: l.estimatedUnitCost,
+        currency: l.currency,
+        preferredSupplierId: l._supplierId,
+        preferredSupplierName: l._supplierName,
+        imageKey: l._imageKey ?? undefined,
+        descriptionSource: l._descriptionSource ?? null,
+        isAdditional: l._isAdditional ?? false,
+        editedBy: l._editedBy ?? null,
+        cpoNo: l._cpoNo ?? null,
+        customerName: l._customerName ?? null,
+        customerOrganization: l._customerOrganization ?? null,
+        setGroupId: l._setGroupId ?? null,
+        setGroupLabel: l._setGroupLabel ?? null,
+        setQty: l._setQty ?? null,
+      })),
+  } };
+  }
+
+  // A draft being edited saves itself a moment after each change (lib/use-auto-save.ts)
+  const editInput = editing ? buildEditInput() : null;
+  const autoSave = useAutoSave({
+    value: editInput?.input ?? null,
+    enabled: editing && actioning === null,
+    save: async (input) => { await updatePurchaseRequisition(input); },
+  });
+
+  // "Done": save what's left and leave edit mode
+  async function handleSaveEdit() {
+    const r = buildEditInput();
+    if (r.error !== undefined) { toast.error(r.error); return; }
     await act("save", async () => {
-      await updatePurchaseRequisition({
-        id: pr.id,
-        salesOrderId: pr.salesOrderId ?? undefined,
-        salesOrderNo: pr.salesOrderNo ?? undefined,
-        notes: notes.trim() || undefined,
-        items: validLines.map((l) => ({
-          rowNo: l.rowNo,
-          productId: l.productId,
-          productCode: l.productCode,
-          description: l.description,
-          qty: l.qty,
-          uom: l.uom,
-          estimatedUnitCost: l.estimatedUnitCost,
-          currency: l.currency,
-          preferredSupplierId: l._supplierId,
-          preferredSupplierName: l._supplierName,
-          imageKey: l._imageKey ?? undefined,
-          descriptionSource: l._descriptionSource ?? null,
-          isAdditional: l._isAdditional ?? false,
-          editedBy: l._editedBy ?? null,
-          cpoNo: l._cpoNo ?? null,
-          customerName: l._customerName ?? null,
-          customerOrganization: l._customerOrganization ?? null,
-          setGroupId: l._setGroupId ?? null,
-          setGroupLabel: l._setGroupLabel ?? null,
-          setQty: l._setQty ?? null,
-        })),
-      });
-      toast.success("Requisition updated");
+      await autoSave.flush();
+      await updatePurchaseRequisition(r.input);
+      autoSave.markSaved();
+      toast.success("Requisition saved");
       setEditing(false);
     });
   }
@@ -442,11 +462,10 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
             )}
             {editing && (
               <>
-                <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setLines(pr.items.map(toEditLine)); setNotes(pr.notes ?? ""); }}>
-                  Cancel
-                </Button>
+                {/* changes save themselves, so there's nothing to cancel: Done saves the rest */}
+                <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} />
                 <Button size="sm" onClick={handleSaveEdit} disabled={actioning === "save"}>
-                  {actioning === "save" ? "Saving…" : "Save Changes"}
+                  {actioning === "save" ? "Saving…" : "Done"}
                 </Button>
               </>
             )}

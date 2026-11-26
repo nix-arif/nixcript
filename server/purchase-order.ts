@@ -31,6 +31,7 @@ import {
   member,
 } from "@/db/schema";
 import { nanoid } from "nanoid";
+import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
 import { eq, and, ne, desc, asc, inArray, notInArray, sql, ilike, isNotNull, isNull } from "drizzle-orm";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
@@ -338,6 +339,8 @@ export interface PurchaseOrderItemInput {
 }
 
 export interface CreatePurchaseOrderInput {
+  /** Save as a draft (the create form auto-saves): no PO number yet, nothing linked or sent on. confirmPurchaseOrder issues it. */
+  asDraft?: boolean;
   purchaseRequisitionId?: string; // when set, PO is auto-confirmed (PR approval = authorization)
   salesOrderId?: string;
   supplierId: string;
@@ -1429,11 +1432,14 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
 
   const fromPr = !!input.purchaseRequisitionId;
 
-  // All POs get a PO number and are created as confirmed — no draft/approval cycle here
+  // A PO is created confirmed, with its number. A draft (auto-saved from the create form) gets a
+  // draft reference instead, and its number when it's confirmed (confirmPurchaseOrder).
   const prNo = null;
-  const manualPoNo = input.manualPoNo?.trim();
+  const manualPoNo = input.asDraft ? undefined : input.manualPoNo?.trim();
   let poNo: string;
-  if (manualPoNo) {
+  if (input.asDraft) {
+    poNo = newDraftRef();
+  } else if (manualPoNo) {
     const [clash] = await db
       .select({ id: purchaseOrder.id })
       .from(purchaseOrder)
@@ -1444,7 +1450,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   } else {
     poNo = await generatePoNo(orgId);
   }
-  const status = "confirmed";
+  const status = input.asDraft ? "draft" : "confirmed";
 
   const [row] = await db
     .insert(purchaseOrder)
@@ -1472,7 +1478,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
       deliveryAddress: input.deliveryAddress ?? null,
       status,
       createdBy: userId,
-      ...(fromPr ? { approvedBy: userId, approvedAt: new Date() } : {}),
+      ...(fromPr && !input.asDraft ? { approvedBy: userId, approvedAt: new Date() } : {}),
     })
     .returning();
 
@@ -1531,64 +1537,109 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
     }
   }
 
-  // When converting from a PR, link PR items to this PO (match by productCode)
-  // and update the PR's status to reflect ordering progress
-  if (fromPr && poNo) {
-    // Confirm the referenced PR actually belongs to this org before touching
-    // its items/status — input.purchaseRequisitionId is client-supplied.
-    const [prOwned] = await db
-      .select({ id: purchaseRequisition.id })
-      .from(purchaseRequisition)
-      .where(and(eq(purchaseRequisition.id, input.purchaseRequisitionId!), eq(purchaseRequisition.organizationId, orgId)))
-      .limit(1);
-    if (!prOwned) throw new Error("Purchase requisition not found");
-
-    const poProductCodes = new Set(input.items.map((i) => i.productCode).filter(Boolean));
-
-    const prItemsFull = await db
-      .select({
-        id: purchaseRequisitionItem.id,
-        productCode: purchaseRequisitionItem.productCode,
-        purchaseOrderId: purchaseRequisitionItem.purchaseOrderId,
-      })
-      .from(purchaseRequisitionItem)
-      .where(eq(purchaseRequisitionItem.purchaseRequisitionId, input.purchaseRequisitionId!));
-
-    // Link PR items whose productCode appears in this PO and aren't already linked to another PO
-    const unlinked = prItemsFull.filter(
-      (pi) => pi.productCode && poProductCodes.has(pi.productCode) && !pi.purchaseOrderId,
-    );
-
-    if (unlinked.length > 0) {
-      await Promise.all(
-        unlinked.map((pi) =>
-          db.update(purchaseRequisitionItem)
-            .set({ purchaseOrderId: row.id, purchaseOrderNo: poNo })
-            .where(eq(purchaseRequisitionItem.id, pi.id)),
-        ),
-      );
-    }
-
-    // Re-check coverage after linking and update PR status
-    const updatedItems = prItemsFull.map((pi) =>
-      unlinked.find((u) => u.id === pi.id) ? { ...pi, purchaseOrderId: row.id } : pi,
-    );
-    const allLinked = updatedItems.every((i) => !!i.purchaseOrderId);
-    const anyLinked = updatedItems.some((i) => !!i.purchaseOrderId);
-    const newPrStatus = allLinked ? "ordered" : anyLinked ? "partially_ordered" : "approved";
-
-    await db.update(purchaseRequisition)
-      .set({ status: newPrStatus })
-      .where(eq(purchaseRequisition.id, input.purchaseRequisitionId!));
-
-    revalidatePath(`/dashboard/procurement/requisition/${input.purchaseRequisitionId}`);
-    revalidatePath("/dashboard/procurement/requisition");
+  // When converting from a PR, link PR items to this PO and update the PR's status (a draft: on confirm)
+  if (fromPr && poNo && !input.asDraft) {
+    await linkPrItemsToPo(orgId, input.purchaseRequisitionId!, row.id, poNo, input.items.map((i) => i.productCode));
   }
 
   // Every PO is created already confirmed (see status above) — if the
   // supplier is linked to a sibling org, this fires the matching SO there.
   await maybeCreateIntercompanySalesOrder(row.id);
 
+  return row;
+}
+
+// Links the PR's lines to a confirmed PO (by product code, lines not on another PO yet) and sets the
+// PR's status from how much of it is ordered now.
+async function linkPrItemsToPo(orgId: string, prId: string, poId: string, poNo: string, productCodes: (string | null | undefined)[]): Promise<void> {
+  // Confirm the referenced PR actually belongs to this org before touching
+  // its items/status — prId is client-supplied.
+  const [prOwned] = await db
+    .select({ id: purchaseRequisition.id })
+    .from(purchaseRequisition)
+    .where(and(eq(purchaseRequisition.id, prId), eq(purchaseRequisition.organizationId, orgId)))
+    .limit(1);
+  if (!prOwned) throw new Error("Purchase requisition not found");
+
+  const poProductCodes = new Set(productCodes.filter(Boolean));
+
+  const prItemsFull = await db
+    .select({
+      id: purchaseRequisitionItem.id,
+      productCode: purchaseRequisitionItem.productCode,
+      purchaseOrderId: purchaseRequisitionItem.purchaseOrderId,
+    })
+    .from(purchaseRequisitionItem)
+    .where(eq(purchaseRequisitionItem.purchaseRequisitionId, prId));
+
+  // Link PR items whose productCode appears in this PO and aren't already linked to another PO
+  const unlinked = prItemsFull.filter(
+    (pi) => pi.productCode && poProductCodes.has(pi.productCode) && !pi.purchaseOrderId,
+  );
+
+  if (unlinked.length > 0) {
+    await Promise.all(
+      unlinked.map((pi) =>
+        db.update(purchaseRequisitionItem)
+          .set({ purchaseOrderId: poId, purchaseOrderNo: poNo })
+          .where(eq(purchaseRequisitionItem.id, pi.id)),
+      ),
+    );
+  }
+
+  // Re-check coverage after linking and update PR status
+  const updatedItems = prItemsFull.map((pi) =>
+    unlinked.find((u) => u.id === pi.id) ? { ...pi, purchaseOrderId: poId } : pi,
+  );
+  const allLinked = updatedItems.every((i) => !!i.purchaseOrderId);
+  const anyLinked = updatedItems.some((i) => !!i.purchaseOrderId);
+  const newPrStatus = allLinked ? "ordered" : anyLinked ? "partially_ordered" : "approved";
+
+  await db.update(purchaseRequisition)
+    .set({ status: newPrStatus })
+    .where(eq(purchaseRequisition.id, prId));
+
+  revalidatePath(`/dashboard/procurement/requisition/${prId}`);
+  revalidatePath("/dashboard/procurement/requisition");
+}
+
+// Issues a draft PO (auto-saved from the create form): it gets its PO number and is confirmed, the
+// PR's lines are linked to it, and a sibling company as the supplier gets its sales order.
+export async function confirmPurchaseOrder(id: string, manualPoNo?: string): Promise<PurchaseOrderRow> {
+  const { orgId, userId } = await requireAccess("purchase-order:create");
+  const [po] = await db.select().from(purchaseOrder).where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
+  if (!po) throw new Error("Purchase order not found");
+  if (po.createdBy !== userId) throw new Error("Only the creator can issue this purchase order");
+  if (po.status !== "draft" || !isDraftRef(po.poNo)) throw new Error("This purchase order has already been issued");
+
+  const manual = manualPoNo?.trim();
+  let poNo: string;
+  if (manual) {
+    const [clash] = await db
+      .select({ id: purchaseOrder.id })
+      .from(purchaseOrder)
+      .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.poNo, manual)))
+      .limit(1);
+    if (clash) throw new Error(`PO number "${manual}" is already in use`);
+    poNo = manual;
+  } else {
+    poNo = await generatePoNo(orgId);
+  }
+
+  const [row] = await db
+    .update(purchaseOrder)
+    .set({ status: "confirmed", poNo, ...(po.purchaseRequisitionId ? { approvedBy: userId, approvedAt: new Date() } : {}) })
+    .where(eq(purchaseOrder.id, id))
+    .returning();
+
+  if (po.purchaseRequisitionId) {
+    const items = await db.select({ productCode: purchaseOrderItem.productCode }).from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, id));
+    await linkPrItemsToPo(orgId, po.purchaseRequisitionId, id, poNo, items.map((i) => i.productCode));
+  }
+  await maybeCreateIntercompanySalesOrder(id);
+
+  revalidatePath(`/dashboard/procurement/purchase-order/${id}`);
+  revalidatePath("/dashboard/procurement/purchase-order");
   return row;
 }
 
@@ -1824,7 +1875,7 @@ export async function getPurchaseOrderDeleteBlocker(poId: string): Promise<strin
 // Problems come back as a readable message, not a thrown error (those are
 // hidden in production). Every check runs before any file or row is removed.
 export async function deletePurchaseOrder(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { orgId } = await requireOwner();
+  const { orgId, userId } = await getSession();
 
   const [existing] = await db
     .select()
@@ -1832,6 +1883,11 @@ export async function deletePurchaseOrder(id: string): Promise<{ ok: true } | { 
     .where(and(eq(purchaseOrder.id, id), eq(purchaseOrder.organizationId, orgId)));
 
   if (!existing) return { ok: false, error: "Purchase order not found" };
+  // the owner deletes any draft or cancelled PO; its creator may discard a draft that was never issued
+  const ownDraft = existing.createdBy === userId && existing.status === "draft" && isDraftRef(existing.poNo);
+  if (!ownDraft) {
+    try { await requireOwner(); } catch (e) { return { ok: false, error: e instanceof Error ? e.message : "Only the organization owner can do this" }; }
+  }
   if (existing.approvedAt) return { ok: false, error: "Approved purchase orders cannot be deleted" };
   if (!DELETABLE_STATUSES.has(existing.status)) return { ok: false, error: "Only draft or cancelled purchase orders can be deleted" };
 
@@ -1938,7 +1994,7 @@ export async function approvePurchaseOrder(id: string): Promise<void> {
   await assertSelfActionAllowed(orgId, "purchase-order:approve", po.createdBy, userId, "approve");
 
   // Generate PO number at approval — this is when the PR becomes a Supplier PO
-  const poNo = po.poNo ?? await generatePoNo(orgId);
+  const poNo = po.poNo && !isDraftRef(po.poNo) ? po.poNo : await generatePoNo(orgId);
 
   await db.update(purchaseOrder).set({ status: "confirmed", poNo, approvedBy: userId, approvedAt: new Date() }).where(eq(purchaseOrder.id, id));
   await maybeCreateIntercompanySalesOrder(id);

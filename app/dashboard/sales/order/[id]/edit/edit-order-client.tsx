@@ -3,6 +3,8 @@
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAutoSave } from "@/lib/use-auto-save";
+import { AutoSaveStatus } from "@/components/auto-save-status";
 import { DraftSavedNote } from "@/components/draft-saved-note";
 import { toast } from "sonner";
 import {
@@ -841,92 +843,100 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
   // ── Save ────────────────────────────────────────────────────────────────────
 
-  async function handleSave() {
+  // The SO as it would be saved, or why it can't be yet
+  function buildUpdateInput(): { input: Parameters<typeof updateFn>[0]; error?: undefined } | { input?: undefined; error: string } {
     const primaryCustomerId =
       selectedCustomer?.id ??
       linkedCpos.find((c) => c.customerId)?.customerId ??
       null;
-    if (!primaryCustomerId) { toast.error("Please select a customer"); return; }
-    if (!items.some((i) => i.description || i.productCode)) { toast.error("Add at least one item"); return; }
+    if (!primaryCustomerId) { return { error: "Please select a customer" }; }
+    if (!items.some((i) => i.description || i.productCode)) { return { error: "Add at least one item" }; }
     // Sourcing/OEM fields are not enforced here — editing only ever touches a
     // draft order, and a draft is allowed to stay incomplete until it's
     // actually submitted for approval (from the SO detail page).
     if (linkedCpos.length > 0) {
       for (const cpo of linkedCpos) {
         if (!cpoSalesPersons[cpo.id]?.length) {
-          toast.error(`Sales person required for ${cpo.customerPoNo}`);
-          return;
+          return { error: `Sales person required for ${cpo.customerPoNo}` };
         }
       }
     }
 
+    const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
+    const finalDeliveryDate = linkedCpos.length > 0
+      ? (() => { const d = linkedCpos[0]?.deliveryDate; return d ? new Date(d) : undefined; })()
+      : deliveryDate ? new Date(deliveryDate) : undefined;
+    return { input: {
+      id: order.id,
+      customerId: primaryCustomerId,
+      customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
+      customerPoLinks: linkedCpos.length > 0
+        ? linkedCpos.map((c) => {
+            const sp = cpoSalesPersons[c.id] ?? [];
+            return {
+              customerPoId: c.id,
+              customerPoNo: c.customerPoNo,
+              salesPersonName: sp[0]?.name ?? null,
+              externalPersons: sp.slice(1).map(({ id, name }) => ({ id, name })),
+            };
+          })
+        : undefined,
+      status,
+      salesPersonName: linkedCpos.length > 0
+        ? (cpoSalesPersons[linkedCpos[0]?.id]?.[0]?.name || undefined)
+        : (salesPersons[0]?.name || undefined),
+      associateSalesPersons: (() => {
+        if (linkedCpos.length > 0) {
+          const seen = new Set<string>();
+          const all = linkedCpos.flatMap((c) => (cpoSalesPersons[c.id] ?? []).slice(1).map(({ id, name }) => ({ id, name })))
+            .filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
+          return all.length > 0 ? all : undefined;
+        }
+        return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
+      })(),
+      deliveryDate: finalDeliveryDate,
+      deliveryAddress: (linkedCpos.length > 0 ? linkedCpos[0]?.deliveryAddress : deliveryAddress) || undefined,
+      notes: notes || undefined,
+      ...(isUrgent && {
+        urgentAuthType,
+        urgentAuthBy: urgentAuthBy.trim() || undefined,
+        urgentAuthDate: urgentAuthDate || undefined,
+        urgentPoExpectedBy: urgentPoExpectedBy || undefined,
+        urgentAuthNotes: urgentAuthNotes.trim() || undefined,
+      }),
+      subtotal: subtotal.toFixed(2),
+      overallDiscountPct: overallDiscount.mode === "pct" ? overallDiscount.pct : "0",
+      overallDiscountAmt: overallDiscAmt.toFixed(2),
+      sstPct,
+      sst: sstAmt.toFixed(2),
+      grandTotal: grand.toFixed(2),
+      items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _codeSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _dbDescription, _dbRef, _designBrandSource, _privateLabelSource, ...rest }) => ({
+        ...rest,
+        sourceCustomerPoId: sourceCustomerPoId || undefined,
+        sourceCustomerPoNo: sourceCustomerPoNo || undefined,
+        descriptionSource: _descriptionSource ?? null,
+        codeSource: _codeSource ?? null,
+        qtySource: _qtySource ?? null,
+        uomSource: _uomSource ?? null,
+        unitPriceSource: _unitPriceSource ?? null,
+        discountSource: _discountSource ?? null,
+        editedBy: _editedBy ?? null,
+        soEditedBy: _soEditedBy ?? null,
+        isAdditional: _isAdditional ?? false,
+        designBrandSource: _designBrandSource ?? null,
+        privateLabelSource: _privateLabelSource ?? null,
+      })),
+    } };
+  }
+
+  async function handleSave() {
+    const r = buildUpdateInput();
+    if (r.error !== undefined) { toast.error(r.error); return; }
     setSaving(true);
     try {
-      const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
-      const finalDeliveryDate = linkedCpos.length > 0
-        ? (() => { const d = linkedCpos[0]?.deliveryDate; return d ? new Date(d) : undefined; })()
-        : deliveryDate ? new Date(deliveryDate) : undefined;
-      await updateFn({
-        id: order.id,
-        customerId: primaryCustomerId,
-        customerOrgMemberId: selectedCustomer ? custOrgMemberId : undefined,
-        customerPoLinks: linkedCpos.length > 0
-          ? linkedCpos.map((c) => {
-              const sp = cpoSalesPersons[c.id] ?? [];
-              return {
-                customerPoId: c.id,
-                customerPoNo: c.customerPoNo,
-                salesPersonName: sp[0]?.name ?? null,
-                externalPersons: sp.slice(1).map(({ id, name }) => ({ id, name })),
-              };
-            })
-          : undefined,
-        status,
-        salesPersonName: linkedCpos.length > 0
-          ? (cpoSalesPersons[linkedCpos[0]?.id]?.[0]?.name || undefined)
-          : (salesPersons[0]?.name || undefined),
-        associateSalesPersons: (() => {
-          if (linkedCpos.length > 0) {
-            const seen = new Set<string>();
-            const all = linkedCpos.flatMap((c) => (cpoSalesPersons[c.id] ?? []).slice(1).map(({ id, name }) => ({ id, name })))
-              .filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
-            return all.length > 0 ? all : undefined;
-          }
-          return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
-        })(),
-        deliveryDate: finalDeliveryDate,
-        deliveryAddress: (linkedCpos.length > 0 ? linkedCpos[0]?.deliveryAddress : deliveryAddress) || undefined,
-        notes: notes || undefined,
-        ...(isUrgent && {
-          urgentAuthType,
-          urgentAuthBy: urgentAuthBy.trim() || undefined,
-          urgentAuthDate: urgentAuthDate || undefined,
-          urgentPoExpectedBy: urgentPoExpectedBy || undefined,
-          urgentAuthNotes: urgentAuthNotes.trim() || undefined,
-        }),
-        subtotal: subtotal.toFixed(2),
-        overallDiscountPct: overallDiscount.mode === "pct" ? overallDiscount.pct : "0",
-        overallDiscountAmt: overallDiscAmt.toFixed(2),
-        sstPct,
-        sst: sstAmt.toFixed(2),
-        grandTotal: grand.toFixed(2),
-        items: items.map(({ _key, sourceCustomerPoId, sourceCustomerPoNo, _descriptionSource, _codeSource, _qtySource, _uomSource, _unitPriceSource, _discountSource, _editedBy, _soEditedBy, _isAdditional, _dbDescription, _dbRef, _designBrandSource, _privateLabelSource, ...rest }) => ({
-          ...rest,
-          sourceCustomerPoId: sourceCustomerPoId || undefined,
-          sourceCustomerPoNo: sourceCustomerPoNo || undefined,
-          descriptionSource: _descriptionSource ?? null,
-          codeSource: _codeSource ?? null,
-          qtySource: _qtySource ?? null,
-          uomSource: _uomSource ?? null,
-          unitPriceSource: _unitPriceSource ?? null,
-          discountSource: _discountSource ?? null,
-          editedBy: _editedBy ?? null,
-          soEditedBy: _soEditedBy ?? null,
-          isAdditional: _isAdditional ?? false,
-          designBrandSource: _designBrandSource ?? null,
-          privateLabelSource: _privateLabelSource ?? null,
-        })),
-      });
+      await autoSave.flush();
+      await updateFn(r.input);
+      autoSave.markSaved();
       if (isUnsubmitted) {
         toast.success(`Draft saved — ${order.soNo}`);
         setSavedAt(new Date());
@@ -941,6 +951,14 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       setSaving(false);
     }
   }
+
+  // An unsubmitted SO saves itself a moment after each change (lib/use-auto-save.ts)
+  const autoInput = buildUpdateInput();
+  const autoSave = useAutoSave({
+    value: autoInput.input ?? null,
+    enabled: isUnsubmitted && !saving,
+    save: async (input) => { await updateFn(input); setSavedAt(new Date()); },
+  });
 
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
 
@@ -1016,7 +1034,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       />
 
       <div className="space-y-6">
-        <DraftSavedNote docNo={order.soNo} savedAt={savedAt} />
+        {autoSave.status === "saving" || autoSave.status === "error"
+          ? <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={order.soNo} />
+          : <DraftSavedNote docNo={order.soNo} savedAt={savedAt} />}
 
         {/* The quotation(s) and customer PO(s) this SO is built from — the CPOs as currently linked in the form */}
         <SoReferenceDocs

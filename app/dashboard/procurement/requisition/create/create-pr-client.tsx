@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   createPurchaseRequisition,
+  updatePurchaseRequisition,
+  deletePurchaseRequisition,
   submitPurchaseRequisition,
   searchSuppliersForPr,
   getSoItemsForPr,
@@ -16,6 +18,8 @@ import {
   type PrItemInput,
 } from "@/server/purchase-requisition";
 import { toggleSoItemPrExcluded } from "@/server/sales-order";
+import { useAutoSave, useUserInteracted } from "@/lib/use-auto-save";
+import { AutoSaveStatus } from "@/components/auto-save-status";
 import { useArrowFieldNav } from "@/hooks/use-arrow-field-nav";
 import { getProductByCode } from "@/server/products";
 import { getProductImageUrl } from "@/helper/product-image";
@@ -307,6 +311,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
   const handleFieldNavKeyDown = useArrowFieldNav(formRef);
   const uploadTargetKey   = useRef<string | null>(null);
   const committedRef      = useRef(false);
+  const interacted        = useUserInteracted();
   const linesRef          = useRef(lines);
   useEffect(() => { linesRef.current = lines; }, [lines]);
   useEffect(() => {
@@ -515,51 +520,93 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
       return acc;
     }, {});
 
-  async function handleSave(submit: boolean) {
+  // The PR as it would be saved, or why it can't be yet
+  function buildPrInput(): { input: Parameters<typeof createPurchaseRequisition>[0]; error?: undefined } | { input?: undefined; error: string } {
     const validLines = lines.filter((l) => l.description || l.productCode);
-    if (!validLines.length) { toast.error("Add at least one item"); return; }
+    if (!validLines.length) return { error: "Add at least one item" };
 
     // Auto-derive PR-level CPO: use it only if every filled item shares the same CPO
     const cpoIds = [...new Set(validLines.map((l) => l._cpoId).filter(Boolean))];
     const cpoId  = cpoIds.length === 1 ? cpoIds[0]! : undefined;
     const cpoNo  = cpoId ? validLines.find((l) => l._cpoId === cpoId)?._cpoNo ?? undefined : undefined;
 
+    return { input: {
+      salesOrderId: prType === "customer_order" ? linkedSoId : undefined,
+      salesOrderNo: prType === "customer_order" ? linkedSoNo : undefined,
+      customerPoId: prType === "customer_order" ? cpoId : undefined,
+      customerPoNo: prType === "customer_order" ? cpoNo : undefined,
+      notes: notes.trim() || undefined,
+      prType,
+      samplePurpose: prType === "sample_demo" ? (samplePurpose.trim() || undefined) : undefined,
+      deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+      deliveryAddress: deliveryAddress.trim() || undefined,
+      deliveryAddressType: deliveryAddress.trim() ? deliveryAddressType : undefined,
+      items: validLines.map((l) => ({
+        rowNo: l.rowNo,
+        productId: l.productId,
+        productCode: l.productCode,
+        description: l.description,
+        qty: l.qty,
+        uom: l.uom,
+        estimatedUnitCost: l.estimatedUnitCost,
+        currency: l.currency,
+        preferredSupplierId: l._supplierId,
+        preferredSupplierName: l._supplierName,
+        imageKey: l._imageKey ?? undefined,
+        descriptionSource: l._descriptionSource ?? null,
+        isAdditional: l._isAdditional ?? false,
+        editedBy: l._editedBy ?? null,
+        cpoNo: l._cpoNo ?? null,
+        customerName: l._customerName ?? null,
+        customerOrganization: l._customerOrganization ?? null,
+        setGroupId: l._setGroupId ?? null,
+        setGroupLabel: l._setGroupLabel ?? null,
+        setQty: l._setQty ?? null,
+      })),
+    } };
+  }
+
+  // ── Auto-save: the draft is created the first time the form can be saved, then kept up to date ──
+  const draftRef = useRef<{ id: string; prNo: string } | null>(null);
+  const [draft, setDraft] = useState<{ id: string; prNo: string } | null>(null);
+  async function saveDraft(input: Parameters<typeof createPurchaseRequisition>[0]): Promise<{ id: string; prNo: string }> {
+    if (draftRef.current) {
+      await updatePurchaseRequisition({ ...input, id: draftRef.current.id });
+    } else {
+      const pr = await createPurchaseRequisition(input);
+      draftRef.current = { id: pr.id, prNo: pr.prNo };
+      setDraft(draftRef.current);
+    }
+    committedRef.current = true; // the line images belong to the draft now
+    return draftRef.current;
+  }
+  const autoInput = buildPrInput();
+  const autoSave = useAutoSave({
+    value: autoInput.input ?? null,
+    enabled: interacted && savingMode === null,
+    loadedSaved: false,
+    save: async (input) => { await saveDraft(input); },
+  });
+
+  async function handleDiscardDraft() {
+    const d = draftRef.current;
+    if (!d) { router.back(); return; }
+    if (!confirm(`Discard the draft ${d.prNo}? It will be deleted.`)) return;
+    await autoSave.flush();
+    const res = await deletePurchaseRequisition(d.id);
+    if (!res.ok) { toast.error(res.error); return; }
+    toast.success("Draft discarded");
+    router.push("/dashboard/procurement/requisition");
+  }
+
+  async function handleSave(submit: boolean) {
+    const r = buildPrInput();
+    if (r.error !== undefined) { toast.error(r.error); return; }
     setSavingMode(submit ? "submit" : "draft");
     try {
-      const pr = await createPurchaseRequisition({
-        salesOrderId: prType === "customer_order" ? linkedSoId : undefined,
-        salesOrderNo: prType === "customer_order" ? linkedSoNo : undefined,
-        customerPoId: prType === "customer_order" ? cpoId : undefined,
-        customerPoNo: prType === "customer_order" ? cpoNo : undefined,
-        notes: notes.trim() || undefined,
-        prType,
-        samplePurpose: prType === "sample_demo" ? (samplePurpose.trim() || undefined) : undefined,
-        deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-        deliveryAddress: deliveryAddress.trim() || undefined,
-        deliveryAddressType: deliveryAddress.trim() ? deliveryAddressType : undefined,
-        items: validLines.map((l) => ({
-          rowNo: l.rowNo,
-          productId: l.productId,
-          productCode: l.productCode,
-          description: l.description,
-          qty: l.qty,
-          uom: l.uom,
-          estimatedUnitCost: l.estimatedUnitCost,
-          currency: l.currency,
-          preferredSupplierId: l._supplierId,
-          preferredSupplierName: l._supplierName,
-          imageKey: l._imageKey ?? undefined,
-          descriptionSource: l._descriptionSource ?? null,
-          isAdditional: l._isAdditional ?? false,
-          editedBy: l._editedBy ?? null,
-          cpoNo: l._cpoNo ?? null,
-          customerName: l._customerName ?? null,
-          customerOrganization: l._customerOrganization ?? null,
-          setGroupId: l._setGroupId ?? null,
-          setGroupLabel: l._setGroupLabel ?? null,
-          setQty: l._setQty ?? null,
-        })),
-      });
+      await autoSave.flush(); // nothing in flight: no second draft
+      const pr = await saveDraft(r.input);
+      autoSave.markSaved();
       if (submit) {
         await submitPurchaseRequisition(pr.id);
       }
@@ -590,7 +637,8 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
       <PageHeader
         title="New Purchase Requisition"
         action={
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={draft?.prNo} waiting={interacted ? autoInput.error : null} />
             <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => navigateBack(router, "/dashboard/procurement/requisition")}>
               <ArrowLeftIcon className="w-3.5 h-3.5" /> Back
             </Button>
@@ -1073,7 +1121,9 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
       </div>
 
       <div className="flex justify-end gap-2 pb-6">
-        <Button variant="ghost" size="sm" onClick={() => router.back()}>Cancel</Button>
+        {draft
+          ? <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={handleDiscardDraft} disabled={savingMode !== null}>Discard draft</Button>
+          : <Button variant="ghost" size="sm" onClick={() => router.back()}>Cancel</Button>}
         <Button variant="outline" size="sm" onClick={() => handleSave(false)} disabled={savingMode !== null}>
           {savingMode === "draft" ? "Saving…" : "Save as Draft"}
         </Button>

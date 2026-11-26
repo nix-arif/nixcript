@@ -4,8 +4,12 @@ import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { useAutoSave } from "@/lib/use-auto-save";
+import { AutoSaveStatus } from "@/components/auto-save-status";
+import { isDraftRef } from "@/lib/draft-ref";
 import {
   updatePurchaseOrder,
+  confirmPurchaseOrder,
   getSalesOrderItemsForPo,
   getPoSupplierQuotationUploadUrl,
   type PurchaseOrderWithItems,
@@ -234,39 +238,65 @@ export function EditPurchaseOrderClient({
 
   const [showNoSoDialog, setShowNoSoDialog] = useState(false);
 
-  function handleSave() {
+  const [issueAfterDialog, setIssueAfterDialog] = useState(false);
+  function handleSave(issue = false) {
     if (!supplierId) { toast.error("Supplier is required"); return; }
     const hasItems = items.some((i) => i.description || i.productCode);
     if (!hasItems) { toast.error("Add at least one item"); return; }
     if (items.some((i) => i._imageUploading)) { toast.error("Please wait for image uploads to finish"); return; }
 
-    if (!selectedSo) { setShowNoSoDialog(true); return; }
-    doSave();
+    if (!selectedSo) { setIssueAfterDialog(issue); setShowNoSoDialog(true); return; }
+    doSave(issue);
   }
 
-  async function doSave() {
+  // The PO as it would be saved (null while it can't be yet)
+  function buildEditInput(): Parameters<typeof updateFn>[0] | null {
+    if (!supplierId || !items.some((i) => i.description || i.productCode) || items.some((i) => i._imageUploading)) return null;
+    const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
+    return {
+      id: order.id,
+      supplierId,
+      pricingMethod: pricing.method || undefined,
+      pricingMarginPct: usesPercent(pricing.method) ? pricing.marginPct : undefined,
+      salesOrderId: selectedSo?.id,
+      customerPoIds: selectedCpos.map((c) => c.id),
+      supplierQuotationKey: pdfKey,
+      currency,
+      subtotal: subtotal.toFixed(2),
+      sstPct,
+      sst: sstAmt.toFixed(2),
+      grandTotal: grand.toFixed(2),
+      notes: notes || undefined,
+      expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
+      deliveryAddress: deliveryAddress || undefined,
+      items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, ...rest }) => rest),
+    };
+  }
+
+  // A draft saves itself a moment after each change (lib/use-auto-save.ts)
+  const autoSave = useAutoSave({
+    value: buildEditInput(),
+    enabled: !saving,
+    save: async (input) => { await updateFn(input); committedRef.current = true; },
+  });
+  // a draft from the create form that was never issued: it can be issued from here
+  const unissued = isDraftRef(order.poNo) && updateFn === updatePurchaseOrder;
+
+  async function doSave(issue = false) {
+    const input = buildEditInput();
+    if (!input) return;
     setSaving(true);
     try {
-      const { subtotal, sstAmt, grand } = calcTotals(items, sstPct);
-      await updateFn({
-        id: order.id,
-        supplierId,
-        pricingMethod: pricing.method || undefined,
-        pricingMarginPct: usesPercent(pricing.method) ? pricing.marginPct : undefined,
-        salesOrderId: selectedSo?.id,
-        customerPoIds: selectedCpos.map((c) => c.id),
-        supplierQuotationKey: pdfKey,
-        currency,
-        subtotal: subtotal.toFixed(2),
-        sstPct,
-        sst: sstAmt.toFixed(2),
-        grandTotal: grand.toFixed(2),
-        notes: notes || undefined,
-        expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-        deliveryAddress: deliveryAddress || undefined,
-        items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, ...rest }) => rest),
-      });
+      await autoSave.flush();
+      await updateFn(input);
+      autoSave.markSaved();
       committedRef.current = true;
+      if (issue) {
+        const po = await confirmPurchaseOrder(order.id);
+        toast.success(po.poNo ? `Supplier PO ${po.poNo} created` : "Supplier PO created");
+        router.push(`/dashboard/procurement/purchase-order/${order.id}`);
+        return;
+      }
       toast.success("Purchase order updated");
       router.push(backUrl);
     } catch (e) {
@@ -564,10 +594,18 @@ export function EditPurchaseOrderClient({
 
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
-          <Button onClick={handleSave} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
-            {saving ? "Saving…" : "Save changes"}
+          {unissued && (
+            <Button onClick={() => handleSave(true)} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
+              {saving ? "Creating…" : "Create Supplier PO"}
+            </Button>
+          )}
+          <Button variant={unissued ? "outline" : "default"} onClick={() => handleSave()} disabled={saving || pdfUploading || loadingSoItems} className="gap-2">
+            {saving ? "Saving…" : unissued ? "Save draft" : "Save changes"}
           </Button>
-          <Button variant="outline" onClick={() => router.push(backUrl)}>Cancel</Button>
+          <Button variant="outline" onClick={() => router.push(backUrl)}>{unissued ? "Close" : "Cancel"}</Button>
+          <span className="self-center">
+            <AutoSaveStatus status={autoSave.status} savedAt={autoSave.savedAt} error={autoSave.error} docNo={order.poNo} />
+          </span>
         </div>
       </div>
 
@@ -588,7 +626,7 @@ export function EditPurchaseOrderClient({
             <Button variant="outline" size="sm" onClick={() => setShowNoSoDialog(false)}>
               Cancel
             </Button>
-            <Button size="sm" onClick={() => { setShowNoSoDialog(false); doSave(); }}>
+            <Button size="sm" onClick={() => { setShowNoSoDialog(false); doSave(issueAfterDialog); }}>
               Save anyway
             </Button>
           </div>
