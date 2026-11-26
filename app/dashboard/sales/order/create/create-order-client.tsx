@@ -55,16 +55,10 @@ import { isNotAsSetLabel, sourceQuotationNo, titleBySet } from "@/lib/customer-p
 import { itemCustomer } from "@/lib/customer-po/customer-match";
 import { applySoSheet, downloadSoItemsSheet, readSoItemsSheet } from "@/lib/sales-order/items-sheet";
 import { uid } from "@/lib/uid";
-import { NO_DISCOUNT, discountFromQuotations, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
+import { NO_DISCOUNT, cpoDiscount, discountFromQuotations, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
 import { OverallDiscountInput } from "../overall-discount-input";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
-
-// The overall discount saved on a CPO, if it was saved with one (older CPOs have none recorded)
-function cpoDiscount(c: { overallDiscountPct?: string | null; overallDiscountAmt?: string | null }) {
-  if (c.overallDiscountPct == null && c.overallDiscountAmt == null) return {};
-  return { discountPct: c.overallDiscountPct ?? "0", discountAmt: c.overallDiscountAmt ?? "0" };
-}
 
 type LinkedQuotation = {
   id: string;

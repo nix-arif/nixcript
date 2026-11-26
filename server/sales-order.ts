@@ -169,6 +169,9 @@ export type CpoCustomer = {
   salesPersonName: string | null;     // original from CPO table
   soSalesPersonName: string | null;   // SO-level override (from customerPoLinks)
   externalPersons: { id: string; name: string }[];
+  // Overall discount saved on the CPO (null: none recorded)
+  overallDiscountPct: string | null;
+  overallDiscountAmt: string | null;
 };
 
 export type SalesOrderListRow = SalesOrderRow & {
@@ -364,7 +367,7 @@ async function enrichSalesOrderRows(rows: SalesOrderRow[]): Promise<SalesOrderLi
     db.select({ id: user.id, name: user.name }).from(user).where(inArray(user.id, creatorIds)),
     allCpoIds.length > 0
       ? db
-          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName })
+          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName, overallDiscountPct: customerPurchaseOrder.overallDiscountPct, overallDiscountAmt: customerPurchaseOrder.overallDiscountAmt })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, allCpoIds))
       : Promise.resolve([]),
@@ -386,6 +389,8 @@ async function enrichSalesOrderRows(rows: SalesOrderRow[]): Promise<SalesOrderLi
         salesPersonName: cpo?.salesPersonName ?? null,
         soSalesPersonName: l.salesPersonName ?? null,
         externalPersons: l.externalPersons ?? [],
+        overallDiscountPct: cpo?.overallDiscountPct ?? null,
+        overallDiscountAmt: cpo?.overallDiscountAmt ?? null,
       };
     });
     return { ...r, createdByName: nameOf(r.createdBy), cpoCustomers };
@@ -439,7 +444,7 @@ async function fetchSalesOrderWithItems(so: SalesOrderRow): Promise<SalesOrderWi
       .orderBy(asc(salesOrderItem.rowNo)),
     cpoIds.length > 0
       ? db
-          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName })
+          .select({ id: customerPurchaseOrder.id, customerId: customerPurchaseOrder.customerId, customerSnapshot: customerPurchaseOrder.customerSnapshot, deliveryDate: customerPurchaseOrder.deliveryDate, salesPersonName: customerPurchaseOrder.salesPersonName, overallDiscountPct: customerPurchaseOrder.overallDiscountPct, overallDiscountAmt: customerPurchaseOrder.overallDiscountAmt })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, cpoIds))
       : Promise.resolve([]),
@@ -466,6 +471,8 @@ async function fetchSalesOrderWithItems(so: SalesOrderRow): Promise<SalesOrderWi
       salesPersonName: cpo?.salesPersonName ?? null,
       soSalesPersonName: l.salesPersonName ?? null,
       externalPersons: l.externalPersons ?? [],
+      overallDiscountPct: cpo?.overallDiscountPct ?? null,
+      overallDiscountAmt: cpo?.overallDiscountAmt ?? null,
     };
   });
 
@@ -527,7 +534,7 @@ export async function getSalesOrderForPrint(id: string) {
             customerId: customerPurchaseOrder.customerId,
             customerSnapshot: customerPurchaseOrder.customerSnapshot,
             deliveryDate: customerPurchaseOrder.deliveryDate,
-            salesPersonName: customerPurchaseOrder.salesPersonName,
+            salesPersonName: customerPurchaseOrder.salesPersonName, overallDiscountPct: customerPurchaseOrder.overallDiscountPct, overallDiscountAmt: customerPurchaseOrder.overallDiscountAmt,
           })
           .from(customerPurchaseOrder)
           .where(inArray(customerPurchaseOrder.id, cpoIds))
@@ -552,6 +559,8 @@ export async function getSalesOrderForPrint(id: string) {
       salesPersonName: cpo?.salesPersonName ?? null,
       soSalesPersonName: l.salesPersonName ?? null,
       externalPersons: l.externalPersons ?? [],
+      overallDiscountPct: cpo?.overallDiscountPct ?? null,
+      overallDiscountAmt: cpo?.overallDiscountAmt ?? null,
     };
   });
 

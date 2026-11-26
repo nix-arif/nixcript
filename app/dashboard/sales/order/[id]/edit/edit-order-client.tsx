@@ -29,7 +29,7 @@ import { useDbDescriptions } from "@/lib/sales-order/use-db-descriptions";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
 import { uid } from "@/lib/uid";
-import { discountFromSaved, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
+import { cpoDiscount, discountFromQuotations, discountFromSaved, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
 import { OverallDiscountInput } from "../../overall-discount-input";
 import {
   ArrowLeftIcon,
@@ -68,6 +68,9 @@ type LinkedCpo = {
   _salesPersonInherited?: string | null;
   _deliveryDateInherited?: string | null;
   _deliveryAddressInherited?: string | null;
+  // Overall discount saved on the CPO (carried from its quotations); undefined for CPOs saved before it was kept
+  discountPct?: string;
+  discountAmt?: string;
 };
 
 interface LineItem extends SalesOrderItemInput {
@@ -334,6 +337,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         _salesPersonInherited: spInherited,
         _deliveryDateInherited: dateInherited,
         _deliveryAddressInherited: addrInherited ?? "",
+        ...(cpoCustomer ? cpoDiscount(cpoCustomer) : {}),
       };
     }),
   );
@@ -433,6 +437,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   const [overallDiscount, setOverallDiscount] = useState<OverallDiscount>(() =>
     discountFromSaved(order.overallDiscountPct, order.overallDiscountAmt),
   );
+  // "Keep this SO's discount" chosen for the CPOs linked now (asked again when they change)
+  const [cpoDiscountDismissed, setCpoDiscountDismissed] = useState(false);
 
   // ── Items ───────────────────────────────────────────────────────────────────
   // (hook is wired right after the items state, below)
@@ -644,7 +650,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         _salesPersonInherited: spInherited,
         _deliveryDateInherited: dateInherited,
         _deliveryAddressInherited: addrInherited ?? "",
+        ...cpoDiscount(data),
       }]);
+      setCpoDiscountDismissed(false);
       const spList: { id: string; name: string; isExt: boolean }[] = [];
       if (data.salesPersonName) {
         const m = members.find(x => (x.name ?? x.email)?.toLowerCase() === data.salesPersonName!.toLowerCase());
@@ -666,6 +674,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   function removeCpo(id: string) {
     setCpoSalesPersons((prev) => { const next = { ...prev }; delete next[id]; return next; });
     setLinkedCpos((prev) => prev.filter((c) => c.id !== id));
+    setCpoDiscountDismissed(false);
   }
 
   // ── Customer search ─────────────────────────────────────────────────────────
@@ -933,6 +942,17 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   }
 
   const { subtotal, overallDiscAmt, sstAmt, grand } = calcTotals(items, sstPct, overallDiscount);
+
+  // The discount the linked CPOs carry (from their quotations, as saved on each CPO). Linking a CPO here
+  // doesn't bring its lines, so the SO's discount isn't changed by itself: the user is told when they differ.
+  const cpoSources = linkedCpos.flatMap((c) =>
+    c.discountPct !== undefined ? [{ id: c.id, no: c.customerPoNo, discountPct: c.discountPct, discountAmt: c.discountAmt ?? "0" }] : [],
+  );
+  const cpoSuggested = cpoSources.length > 0
+    ? discountFromQuotations(items.map((i) => ({ sourceQuotationId: i.sourceCustomerPoId, totalPrice: i.totalPrice })), cpoSources)
+    : null;
+  const cpoSuggestedAmt = cpoSuggested ? overallDiscountAmount(subtotal, cpoSuggested) : 0;
+  const showCpoDiscountNote = !!cpoSuggested && !cpoDiscountDismissed && Math.abs(cpoSuggestedAmt - overallDiscAmt) >= 0.005;
   const allCompanies = selectedCustomer?.companies ?? [];
   const showCpoColumn = linkedCpos.length > 1;
   const cpoLinkedCustomers = linkedCpos.length > 0
@@ -2071,6 +2091,32 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                 <span className="tabular-nums font-mono">{fmt(subtotal)}</span>
               </div>
               <OverallDiscountInput value={overallDiscount} onChange={setOverallDiscount} amount={overallDiscAmt} fmt={fmt} />
+              {showCpoDiscountNote && cpoSuggested && (
+                <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                  <AlertTriangleIcon className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <div className="space-y-1">
+                    <p>
+                      The linked customer PO{cpoSources.length > 1 ? "s carry" : " carries"} an overall discount of{" "}
+                      <span className="font-semibold">{fmt(cpoSuggestedAmt)}</span>, but this SO has {fmt(overallDiscAmt)}.
+                    </p>
+                    <ul className="list-disc pl-4">
+                      {cpoSources.map((c) => (
+                        <li key={c.id}>
+                          {c.no}: {parseFloat(c.discountPct) > 0 ? `${c.discountPct}%` : parseFloat(c.discountAmt) > 0 ? fmt(parseFloat(c.discountAmt)) : "no discount"}
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-3">
+                      <button type="button" className="font-semibold underline" onClick={() => setOverallDiscount(cpoSuggested)}>
+                        Use the customer PO&apos;s discount
+                      </button>
+                      <button type="button" className="underline" onClick={() => setCpoDiscountDismissed(true)}>
+                        Keep this SO&apos;s
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground shrink-0">SST</span>
                 <div className="flex items-center gap-1">

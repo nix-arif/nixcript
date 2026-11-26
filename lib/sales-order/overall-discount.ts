@@ -71,3 +71,12 @@ export function discountFromQuotations(
   });
   return { mode: "fixed", pct: "0", amt: total.toFixed(2) };
 }
+
+/** The overall discount saved on a CPO, if it was saved with one (older CPOs have none recorded). */
+export function cpoDiscount(c: { overallDiscountPct?: string | null; overallDiscountAmt?: string | null }): {
+  discountPct?: string;
+  discountAmt?: string;
+} {
+  if (c.overallDiscountPct == null && c.overallDiscountAmt == null) return {};
+  return { discountPct: c.overallDiscountPct ?? "0", discountAmt: c.overallDiscountAmt ?? "0" };
+}
