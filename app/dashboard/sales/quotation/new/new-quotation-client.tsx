@@ -43,6 +43,7 @@ import {
   ListOrderedIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isRowSequenceValid, nextRowLabel, renumberRows } from "@/lib/quotation/row-numbering";
 import { isSetPriced, lineTotalsWithSetPrice } from "@/lib/quotation-set-price";
 import { PageHeader } from "@/components/page-header";
 import { type DocumentCategoryRow } from "@/server/document-category";
@@ -542,14 +543,13 @@ export function NewQuotationClient({
   }
 
   const addRow = () => {
-    const maxRowNo = reviewItems.reduce((max, it) => Math.max(max, Number(it.rowNo) || 0), 0);
     const uniqueGroups = [...new Set(reviewItems.map((it) => it.setGroupId).filter(Boolean))];
     const singleGroup = uniqueGroups.length === 1
       ? reviewItems.find((it) => it.setGroupId === uniqueGroups[0])
       : null;
     const multiGroup = uniqueGroups.length > 1;
     const newItem: ReviewItem = {
-      rowNo: String(maxRowNo + 1),
+      rowNo: nextRowLabel(reviewItems),
       qty: "1",
       unitPrice: "0",
       discountPct: "0",
@@ -605,10 +605,11 @@ export function NewQuotationClient({
     setReviewItems((prev) => prev.filter((_, idx) => idx !== i));
   };
 
-  // Resequence every row's # to match its current position (1, 2, 3, ...)
+  // Resequence every row's # in table order, keeping the user's style (1, 2, 3 / a, b, c / I, II, III)
   const renumberItems = () => {
-    setReviewItems((prev) => prev.map((it, i) => ({ ...it, rowNo: String(i + 1) })));
+    setReviewItems((prev) => renumberRows(prev));
   };
+  const rowsOutOfSequence = !isRowSequenceValid(reviewItems);
 
   const CELL_COLS = 4; // code=0, description=1, qty=2, unitPrice=3
   const handleCellKeyDown = (
@@ -1802,7 +1803,19 @@ export function NewQuotationClient({
                           ["UNIT PRICE", "TOTAL", "TOTAL QTY", "QTY/SET"].includes(h) ? "text-right" : "text-left",
                         )}
                       >
-                        {h}
+                        {h === "#" && step === 2 && rowsOutOfSequence ? (
+                          <span className="inline-flex items-center gap-1">
+                            #
+                            <button
+                              type="button"
+                              onClick={renumberItems}
+                              title="Row numbers are out of sequence. Click to renumber."
+                              className="inline-flex items-center gap-0.5 rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                            >
+                              <ListOrderedIcon className="w-2.5 h-2.5" /> Renumber
+                            </button>
+                          </span>
+                        ) : h}
                       </th>
                     ))}
                   </tr>
@@ -2160,14 +2173,6 @@ export function NewQuotationClient({
                   className="flex-1 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-3 py-1.5 justify-center hover:border-foreground/40 transition-colors"
                 >
                   <PlusIcon className="w-3.5 h-3.5" /> Add row
-                </button>
-                <button
-                  type="button"
-                  onClick={renumberItems}
-                  title="Resequence # column to match row order"
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-3 py-1.5 justify-center hover:border-foreground/40 transition-colors"
-                >
-                  <ListOrderedIcon className="w-3.5 h-3.5" /> Renumber
                 </button>
               </div>
             )}

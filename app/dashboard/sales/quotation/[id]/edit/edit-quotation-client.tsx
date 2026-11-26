@@ -34,8 +34,10 @@ import {
   XIcon,
   DatabaseIcon,
   PencilIcon,
+  ListOrderedIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isRowSequenceValid, nextRowLabel, renumberRows } from "@/lib/quotation/row-numbering";
 import { nanoid } from "nanoid";
 
 type Data = NonNullable<Awaited<ReturnType<typeof getQuotationDetail>>>;
@@ -284,19 +286,21 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
   };
 
   const removeItem = (key: string) => {
-    setItems((prev) =>
-      prev
-        .filter((it) => it._key !== key)
-        .map((it, i) => ({ ...it, rowNo: String(i + 1) })),
-    );
+    setItems((prev) => prev.filter((it) => it._key !== key));
   };
+
+  // Resequence every row's # in table order, keeping the user's style (1, 2, 3 / a, b, c / I, II, III)
+  const renumberItems = () => {
+    setItems((prev) => renumberRows(prev));
+  };
+  const rowsOutOfSequence = !isRowSequenceValid(items);
 
   const addItem = () => {
     setItems((prev) => [
       ...prev,
       {
         _key: nanoid(),
-        rowNo: String(prev.length + 1),
+        rowNo: nextRowLabel(prev),
         qty: "1",
         unitPrice: "0",
         discountPct: "0",
@@ -398,9 +402,14 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
         )}
       >
         {/* # + type toggle */}
-        <td className="px-3 py-1.5 w-12 text-center align-top">
+        <td className="px-3 py-1.5 w-14 text-center align-top">
           <div className="flex flex-col items-center gap-0.5">
-            <span className="text-muted-foreground text-[10px]">{item.rowNo}</span>
+            <input
+              aria-label="Row number"
+              value={item.rowNo}
+              onChange={(e) => updateItem(item._key, "rowNo", e.target.value)}
+              className="w-10 h-5 border border-input rounded px-1 text-[10px] text-center bg-background outline-none focus:ring-1 focus:ring-ring text-muted-foreground"
+            />
             <button
               type="button"
               onClick={() => updateItem(item._key, "lineType", isRent ? "sell" : "rent")}
@@ -1030,7 +1039,19 @@ export function EditQuotationClient({ data, initialCustomer, members, categories
                           ["Unit Price", "Total"].includes(h) && "text-right",
                         )}
                       >
-                        {h}
+                        {h === "#" && rowsOutOfSequence ? (
+                          <span className="inline-flex items-center gap-1">
+                            #
+                            <button
+                              type="button"
+                              onClick={renumberItems}
+                              title="Row numbers are out of sequence. Click to renumber."
+                              className="inline-flex items-center gap-0.5 rounded border border-amber-300 bg-amber-50 px-1 py-0.5 text-[9px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                            >
+                              <ListOrderedIcon className="w-2.5 h-2.5" /> Renumber
+                            </button>
+                          </span>
+                        ) : h}
                       </th>
                     ))}
                   </tr>
