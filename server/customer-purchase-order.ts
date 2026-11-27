@@ -559,7 +559,48 @@ export async function updateCustomerPoCentralized(input: UpdateCustomerPoInput):
   return applyCustomerPoUpdate(existing, input, userId);
 }
 
+// Once its sales order is submitted or later, a CPO's lines, prices, amount and discount are locked:
+// they're what the SO was made and approved from, and a change there wouldn't reach the SO (or what
+// was bought from it). Other details (number, document, dates, address, notes) stay editable.
+const SO_LOCKING_STATUSES = new Set(["submitted", "confirmed", "fulfilled"]);
+export type CpoSoLock = { soId: string; soNo: string; status: string };
+
+async function soLockFor(cpo: Pick<CustomerPo, "salesOrderId">): Promise<CpoSoLock | null> {
+  if (!cpo.salesOrderId) return null;
+  const [so] = await db
+    .select({ soId: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status })
+    .from(salesOrder)
+    .where(eq(salesOrder.id, cpo.salesOrderId))
+    .limit(1);
+  return so && SO_LOCKING_STATUSES.has(so.status) ? so : null;
+}
+
+/** For the CPO edit form: the sales order that locks its lines and amount, if any. */
+export async function getCustomerPoSoLock(cpoId: string): Promise<CpoSoLock | null> {
+  // the edit form is reached from the CPO list or the centralized one
+  const { orgId, userId } = await requireAccess("customer-po:read").catch(() => requireAccess("customer-po:read:centralized"));
+  const ownerOrgIds = await getAllOwnerOrgIds(userId, orgId);
+  const [cpo] = await db
+    .select({ salesOrderId: customerPurchaseOrder.salesOrderId })
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.id, cpoId), inArray(customerPurchaseOrder.organizationId, ownerOrgIds)));
+  return cpo ? soLockFor(cpo) : null;
+}
+
 async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput, userId: string): Promise<CustomerPo> {
+  const lock = await soLockFor(existing);
+  if (lock) {
+    const changesMoney =
+      input.items !== undefined ||
+      input.quotationLinks !== undefined ||
+      (input.amount !== undefined && input.amount !== existing.amount) ||
+      (input.currency !== undefined && input.currency !== existing.currency) ||
+      (input.overallDiscountPct !== undefined && input.overallDiscountPct !== existing.overallDiscountPct) ||
+      (input.overallDiscountAmt !== undefined && input.overallDiscountAmt !== existing.overallDiscountAmt);
+    if (changesMoney) {
+      throw new Error(`The lines, amount and discount can't be changed: sales order ${lock.soNo} made from this CPO is ${lock.status}. Recall the sales order first to amend them.`);
+    }
+  }
   const wasDraft = existing.status === "draft";
   const nextStatus = input.status ?? existing.status;
   const staysDraft = nextStatus === "draft";
@@ -591,8 +632,9 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
       quotationLinks: input.quotationLinks !== undefined
         ? (input.quotationLinks && input.quotationLinks.length > 0 ? input.quotationLinks : null)
         : existing.quotationLinks,
-      salesOrderId: input.salesOrderId ?? null,
-      salesOrderNo: input.salesOrderNo ?? null,
+      // the link to its SO is kept unless it's being changed (the edit form doesn't send it)
+      salesOrderId: input.salesOrderId !== undefined ? (input.salesOrderId ?? null) : existing.salesOrderId,
+      salesOrderNo: input.salesOrderNo !== undefined ? (input.salesOrderNo ?? null) : existing.salesOrderNo,
       items: input.items !== undefined ? (input.items ?? null) : existing.items,
       amount: input.amount ?? existing.amount,
       currency: input.currency ?? existing.currency,

@@ -5,7 +5,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DraftSavedNote } from "@/components/draft-saved-note";
 import { toast } from "sonner";
-import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, checkCustomerPoNo, type CpoItemInput, type CustomerPo } from "@/server/customer-purchase-order";
+import { updateCustomerPo, getNextCashSaleNo, getNextPoTbcNo, checkCustomerPoNo, type CpoItemInput, type CustomerPo, type CpoSoLock } from "@/server/customer-purchase-order";
 import { type OrgMember } from "@/server/members";
 import { getCustomer } from "@/server/customer";
 import { searchQuotationsByNo, getQuotationForSO, getQuotationDiscounts } from "@/server/quotation";
@@ -34,7 +34,7 @@ import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
   PencilIcon, DatabaseIcon, LinkIcon,
-  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon, AlertTriangleIcon,
+  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon, AlertTriangleIcon, LockIcon,
 } from "lucide-react";
 
 type LinkedQuotation = {
@@ -102,14 +102,18 @@ export function EditCustomerPoClient({
   currentUserName = "",
   updateFn = updateCustomerPo,
   detailHref,
+  soLock = null,
 }: {
   cpo: CustomerPo;
   members: OrgMember[];
   currentUserName?: string;
   updateFn?: typeof updateCustomerPo;
   detailHref?: string;
+  /** Its sales order is submitted or later: lines, prices, amount and discount are locked */
+  soLock?: CpoSoLock | null;
 }) {
   const router = useRouter();
+  const locked = !!soLock;
   const snap   = cpo.customerSnapshot as any;
   const cpoAny = cpo as any;
   const backHref = detailHref ?? `/dashboard/sales/customer-po/${cpo.id}`;
@@ -862,10 +866,11 @@ export function EditCustomerPoClient({
         customerPoNo:    customerPoNo.trim(),
         customerId:      primary?.customerId ?? cpo.customerId ?? undefined,
         customerOrgMemberId: primary?.customerOrgMemberId ?? undefined,
-        quotationLinks:  linkedQuotations.length > 0
+        quotationLinks:  !locked && linkedQuotations.length > 0
           ? linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo }))
           : undefined,
-        items:           items.length > 0
+        // locked by its sales order: lines, amount and discount are left as they are
+        items:           !locked && items.length > 0
           ? (asDraft ? bookSetPrices(items) : bookSetPrices(items.filter((i) => i.included))).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
               ...rest,
               // a draft also keeps the lines that are switched off, so they can be switched on again later
@@ -885,9 +890,11 @@ export function EditCustomerPoClient({
               _editedBy:           rest._editedBy          || undefined,
             }))
           : undefined,
-        amount,
-        currency,
-        ...discountForSave(cpoDisc.discountFor(items), items),
+        ...(!locked && {
+          amount,
+          currency,
+          ...discountForSave(cpoDisc.discountFor(items), items),
+        }),
         // the new file, else the one it had; null when it was removed (the server then deletes the old file once saved)
         documentKey:     pdfKey ?? existingDocKey ?? null,
         salesPersonName: salesPersons[0]?.name || undefined,
@@ -963,6 +970,23 @@ export function EditCustomerPoClient({
       <div className="space-y-5 w-full">
         <DraftSavedNote docNo={cpo.customerPoNo} savedAt={savedAt} />
 
+        {soLock && (
+          <div role="note" className="flex gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+            <LockIcon className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              <p>
+                <span className="font-semibold">Lines, prices, amount and discount are locked.</span>{" "}
+                Sales order <span className="font-mono font-medium">{soLock.soNo}</span> was made from this customer PO and is {soLock.status}:
+                a change here wouldn&apos;t reach it, or what was bought for it.
+              </p>
+              <p className="text-xs">
+                The PO number, document, dates, delivery address, sales person and notes can still be changed. If the customer has amended the order,
+                recall <span className="font-mono">{soLock.soNo}</span> first (recall or cancel its PRs and supplier POs before that), then amend both.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ── 1. The customer's PO document ── */}
         <div className="border border-border rounded-xl p-4 space-y-3">
           <div className="flex flex-wrap items-baseline gap-x-2">
@@ -1005,7 +1029,7 @@ export function EditCustomerPoClient({
         </div>
 
         {/* ── 1. Quotations (required, multiple) ── */}
-        <div className="border border-border rounded-xl p-4">
+        <fieldset disabled={locked} className={cn("min-w-0 border border-border rounded-xl p-4", locked && "opacity-60")}>
           <h2 className="text-sm font-semibold mb-3">
             Our quotation(s) <span className="text-destructive">*</span>
           </h2>
@@ -1162,7 +1186,7 @@ export function EditCustomerPoClient({
               )
             )}
           </div>
-        </div>
+        </fieldset>
 
         {/* ── 2. PO details ── */}
         <div className="border border-border rounded-xl p-4 space-y-4">
@@ -1227,6 +1251,7 @@ export function EditCustomerPoClient({
                 type="number" min="0" step="0.01"
                 value={amount}
                 onChange={(e) => { setAmount(e.target.value); setAmountOverride(true); }}
+                disabled={locked}
                 className={cn("h-9 text-sm tabular-nums", AMOUNT_TONE[amountState].input)}
                 aria-invalid={amountState === "mismatch" || undefined}
               />
@@ -1241,7 +1266,8 @@ export function EditCustomerPoClient({
               <select
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
-                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm"
+                disabled={locked}
+                className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm disabled:opacity-60"
               >
                 <option>MYR</option><option>USD</option><option>EUR</option><option>SGD</option>
               </select>
@@ -1371,7 +1397,7 @@ export function EditCustomerPoClient({
 
         {/* ── 3. Items (from quotations, editable) ── */}
         {items.length > 0 && (
-          <div className="border border-border rounded-xl p-4">
+          <fieldset disabled={locked} className={cn("min-w-0 border border-border rounded-xl p-4", locked && "opacity-60")}>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold">Items</h2>
               <div className="flex items-center gap-3">
@@ -1594,7 +1620,7 @@ export function EditCustomerPoClient({
                 </tfoot>
               </table>
             </div>
-          </div>
+          </fieldset>
         )}
 
         {/* ── 5. Notes ── */}
