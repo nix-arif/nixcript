@@ -1,5 +1,6 @@
 "use server";
 
+import { cascadeCategories, mapCategoriesToOrg, quotationCategories, resolveCategories } from "@/lib/document-category/inherit";
 import { db } from "@/db";
 import {
   customerPurchaseOrder,
@@ -144,6 +145,8 @@ export interface CreateCustomerPoInput {
   deliveryDate?: Date;
   deliveryAddress?: string;
   status?: string;
+  /** Document categories; undefined: inherit from its quotation(s) (on create) or unchanged (on update) */
+  categoryIds?: string[];
 }
 
 export interface UpdateCustomerPoInput extends CreateCustomerPoInput {
@@ -498,10 +501,14 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
     ? await buildCustomerSnapshot(input.customerId, await getAllOwnerOrgIds(userId, orgId), input.customerOrgMemberId)
     : null;
 
+  const categoryIds = await resolveCategories(orgId, input.categoryIds, () =>
+    quotationCategories([input.quotationId, ...(input.quotationLinks ?? []).map((q) => q.quotationId)]));
+
   const [row] = await db
     .insert(customerPurchaseOrder)
     .values({
       id: nanoid(),
+      categoryIds,
       organizationId: orgId,
       customerPoNo: input.customerPoNo?.trim() ?? "",
       customerId: input.customerId ?? null,
@@ -625,9 +632,17 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
   // (nothing has been made from a draft, and an empty old number must never match other documents)
   const renamed = !!newNo && newNo !== oldNo && !wasDraft && !!oldNo.trim();
 
+  // categories: as chosen; else, when it had none yet, its quotations'; else unchanged
+  const oldCategories = (existing.categoryIds ?? []) as string[];
+  const categoryIds = input.categoryIds !== undefined
+    ? await mapCategoriesToOrg(input.categoryIds, existing.organizationId)
+    : oldCategories.length > 0 ? oldCategories
+    : await mapCategoriesToOrg(await quotationCategories([input.quotationId, ...(input.quotationLinks ?? existing.quotationLinks ?? []).map((q) => q.quotationId)]), existing.organizationId);
+
   const [row] = await db
     .update(customerPurchaseOrder)
     .set({
+      categoryIds,
       customerPoNo: input.customerPoNo.trim(),
       quotationId: input.quotationLinks?.[0]?.quotationId ?? input.quotationId ?? null,
       quotationNo: input.quotationLinks?.[0]?.quotationNo ?? input.quotationNo ?? null,
@@ -658,6 +673,8 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
   // an amendment keeps the customer's earlier document: the earlier revision still shows it
   if (oldDocument && !opts.amending) await deleteDocumentAfterSave(oldDocument);
   if (renamed) await renameCustomerPoNoOnDocuments(existing, oldNo, newNo);
+  // its sales order (and on down) follows, unless its categories were changed there by hand
+  await cascadeCategories("cpo", existing.id, oldCategories, categoryIds);
   // recorded now: tell the sales approvers, as if it had just been received
   if (wasDraft && !staysDraft && nextStatus !== "cancelled") await notifyNewCpo(existing.organizationId, userId, existing.id, newNo, row.customerSnapshot);
   return row;

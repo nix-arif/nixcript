@@ -1,5 +1,6 @@
 "use server";
 
+import { cpoCategories, mapCategoriesToOrg, resolveCategories, soCategories } from "@/lib/document-category/inherit";
 import { fillPurchaseRequisitionItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
@@ -144,6 +145,8 @@ export interface CreatePrInput {
   deliveryDate?: Date;
   deliveryAddress?: string;
   deliveryAddressType?: "customer" | "warehouse" | "custom";
+  /** Document categories; undefined: its sales order's / customer PO's (on create) or unchanged (on update) */
+  categoryIds?: string[];
   items: PrItemInput[];
 }
 
@@ -301,10 +304,16 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
     resolvedSoNo = so?.soNo ?? null;
   }
 
+  const categoryIds = await resolveCategories(orgId, input.categoryIds, async () => {
+    const fromSo = await soCategories(input.salesOrderId);
+    return fromSo.length > 0 ? fromSo : cpoCategories([input.customerPoId]);
+  });
+
   const [row] = await db.insert(purchaseRequisition).values({
     id: nanoid(),
     organizationId: orgId,
     prNo,
+    categoryIds,
     salesOrderId:  input.salesOrderId  ?? null,
     salesOrderNo:  resolvedSoNo,
     customerPoId:  input.customerPoId  ?? null,
@@ -374,7 +383,19 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
     resolvedSoNo = so?.soNo ?? null;
   }
 
+  // categories: as chosen; else, when it had none yet (or its SO changed), its sales order's; else unchanged
+  const oldCategories = (existing.categoryIds ?? []) as string[];
+  const soChanged = (input.salesOrderId ?? null) !== existing.salesOrderId;
+  const categoryIds = input.categoryIds !== undefined
+    ? await mapCategoriesToOrg(input.categoryIds, orgId)
+    : oldCategories.length > 0 && !soChanged ? oldCategories
+    : await resolveCategories(orgId, undefined, async () => {
+        const fromSo = await soCategories(input.salesOrderId);
+        return fromSo.length > 0 ? fromSo : cpoCategories([input.customerPoId ?? existing.customerPoId]);
+      });
+
   const [row] = await db.update(purchaseRequisition).set({
+    categoryIds,
     salesOrderId: input.salesOrderId ?? null,
     salesOrderNo: resolvedSoNo,
     notes: input.notes ?? null,

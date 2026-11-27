@@ -59,6 +59,8 @@ export interface PrefillData {
   customer: Customer | null;
   deliveryAddress: string;
   deliveryDate: string;
+  /** Its customer PO's / sales order's categories (the DO starts with them instead of the defaults) */
+  categoryIds?: string[];
   items: Omit<LineItem, "_key">[];  // includes soItemId?, originalQty?
 }
 
@@ -453,7 +455,7 @@ function DoForm({ prefill, categories = [] }: { prefill: PrefillData; categories
   const [deliveryDate, setDeliveryDate] = useState(prefill.deliveryDate || new Date().toISOString().split("T")[0]);
   const [notes, setNotes] = useState("");
   const [categoryIds, setCategoryIds] = useState<string[]>(() =>
-    categories.filter((c) => c.isDefault).map((c) => c.id),
+    prefill?.categoryIds?.length ? prefill.categoryIds : categories.filter((c) => c.isDefault).map((c) => c.id),
   );
   const [items, setItems] = useState<LineItem[]>(() =>
     prefill.items?.length

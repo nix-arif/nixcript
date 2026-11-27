@@ -2,6 +2,7 @@
 
 import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { DocRevBadge, AmendedAfterNote } from "@/components/amendment-history";
+import { DocumentCategoriesCard } from "@/components/document-categories-card";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -504,6 +505,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
       />
 
       <AmendedAfterNote soId={pr.salesOrderId} soNo={pr.salesOrderNo} since={pr.createdAt} />
+      <DocumentCategoriesCard kind="pr" docId={pr.id} />
 
       {/* Header info */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 rounded-xl border border-border bg-background p-5">

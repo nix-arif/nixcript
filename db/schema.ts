@@ -2443,6 +2443,9 @@ export const salesOrder = pgTable(
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id),
+    // Document categories (document_category ids, this org's own): carried down the chain
+    // quotation → customer PO → sales order → PR → supplier PO → DO → invoice (lib/document-category/inherit.ts)
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
 
     submittedBy: text("submitted_by").references(() => user.id),
@@ -3007,6 +3010,9 @@ export const purchaseOrder = pgTable(
       .references(() => user.id),
     approvedBy: text("approved_by").references(() => user.id),
     approvedAt: timestamp("approved_at"),
+    // Document categories (document_category ids, this org's own): carried down the chain
+    // quotation → customer PO → sales order → PR → supplier PO → DO → invoice (lib/document-category/inherit.ts)
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -3179,6 +3185,9 @@ export const purchaseRequisition = pgTable(
     requestedBy: text("requested_by").notNull().references(() => user.id),
     approvedBy: text("approved_by").references(() => user.id),
     approvedAt: timestamp("approved_at"),
+    // Document categories (document_category ids, this org's own): carried down the chain
+    // quotation → customer PO → sales order → PR → supplier PO → DO → invoice (lib/document-category/inherit.ts)
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().$onUpdate(() => new Date()).notNull(),
   },
@@ -3718,6 +3727,9 @@ export const customerPurchaseOrder = pgTable(
     status: text("status").notNull().default("received"), // draft | received | acknowledged | fulfilled | cancelled
 
     createdBy: text("created_by").notNull().references(() => user.id),
+    // Document categories (document_category ids, this org's own): carried down the chain
+    // quotation → customer PO → sales order → PR → supplier PO → DO → invoice (lib/document-category/inherit.ts)
+    categoryIds: json("category_ids").$type<string[]>().default([]).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

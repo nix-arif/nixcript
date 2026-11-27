@@ -17,6 +17,7 @@
 //
 // Server-only: called from the server actions in server/customer-purchase-order.ts.
 
+import { soCategories } from "@/lib/document-category/inherit";
 import { nanoid } from "nanoid";
 import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -607,6 +608,7 @@ export async function applyAmendmentDownstream(
       .where(and(eq(product.organizationId, orgId), inArray(product.productCode, codes)));
     await db.insert(purchaseRequisition).values({
       id: prId, organizationId: orgId, prNo: raisedPrNo,
+      categoryIds: await soCategories(so.id),
       salesOrderId: so.id, salesOrderNo: so.soNo,
       customerPoId: work.cpo.id, customerPoNo: work.cpo.customerPoNo,
       status: "draft", prType: "customer_order",

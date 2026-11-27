@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isDraftRef } from "@/lib/draft-ref";
 import { AmendmentHistory } from "@/components/amendment-history";
+import { DocumentCategoriesCard } from "@/components/document-categories-card";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import {
@@ -529,6 +530,7 @@ export function PurchaseOrderDetailClient({
         {/* Left — supplier + items + GR */}
         <div className="lg:col-span-2 space-y-5">
           <AmendmentHistory docType="po" docId={order.id} />
+          <DocumentCategoriesCard kind="po" docId={order.id} />
           {snap && (
             <section className="border border-border rounded-xl p-4">
               <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Supplier</h2>

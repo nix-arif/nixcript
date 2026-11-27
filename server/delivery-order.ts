@@ -1,5 +1,6 @@
 "use server";
 
+import { cpoCategories, resolveCategories, soCategories } from "@/lib/document-category/inherit";
 import { fillDeliveryOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
@@ -164,6 +165,8 @@ export type DoForInvoice = {
   customerPoNo: string | null;
   customerId: string | null;
   customerSnapshot: { title?: string; name: string; organizationName?: string; organizationAddress?: string; email?: string; contactNo?: string } | null;
+  /** The DO's categories (the invoice starts with them) */
+  categoryIds: string[];
   // From linked SO (when available)
   salesPersonId: string | null;
   salesPersonName: string | null;
@@ -905,6 +908,7 @@ export async function getDoForInvoice(id: string): Promise<DoForInvoice | null> 
     customerPoNo: effectiveCpoNo,
     customerId: do_.customerId,
     customerSnapshot: do_.customerSnapshot as DoForInvoice["customerSnapshot"],
+    categoryIds: (do_.categoryIds ?? []) as string[],
     salesPersonId,
     salesPersonName,
     associateSalesPersons,
@@ -1490,7 +1494,11 @@ export async function createDeliveryOrder(input: CreateDeliveryOrderInput): Prom
         ? { actualStatus: input.items.length ? "recorded" : "pending", actualRecordedAt: input.items.length ? new Date() : null, actualRecordedBy: input.items.length ? userId : null }
         : {}),
       casePrice: input.isCaseDo && input.priceMode === "total" && parseFloat(input.casePrice ?? "") >= 0 ? parseFloat(input.casePrice!).toFixed(2) : null,
-      categoryIds: input.categoryIds ?? [],
+      // not chosen: its customer PO's / sales order's categories (lib/document-category/inherit.ts)
+      categoryIds: input.categoryIds ?? await resolveCategories(orgId, undefined, async () => {
+        const fromCpo = await cpoCategories([input.customerPoId]);
+        return fromCpo.length > 0 ? fromCpo : soCategories(input.salesOrderId);
+      }),
       createdBy: userId,
     })
     .returning();

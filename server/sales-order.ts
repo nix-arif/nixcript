@@ -1,5 +1,6 @@
 "use server";
 
+import { cascadeCategories, cpoCategories, mapCategoriesToOrg, poCategories, quotationCategories, resolveCategories } from "@/lib/document-category/inherit";
 import { fillSalesOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
@@ -263,6 +264,8 @@ export interface CreateSalesOrderInput {
   // linked to this org.
   sourceOrganizationId?: string;
   sourcePurchaseOrderId?: string;
+  /** Document categories; undefined: inherit from its customer PO(s) / quotation(s) (on create) or unchanged (on update) */
+  categoryIds?: string[];
   items: SalesOrderItemInput[];
 }
 
@@ -639,10 +642,17 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
   // the running number comes on approval (assignSoNumber); until then a draft reference
   const soNo = newDraftRef();
 
+  const categoryIds = await resolveCategories(orgId, input.categoryIds, async () => {
+    const fromCpo = await cpoCategories(cpoIdsOf(input));
+    return fromCpo.length > 0 ? fromCpo
+      : quotationCategories([input.quotationId, ...(input.linkedQuotations ?? []).map((q) => q.id)]);
+  });
+
   const [row] = await db
     .insert(salesOrder)
     .values({
       id: nanoid(),
+      categoryIds,
       organizationId: orgId,
       soNo,
       quotationId: input.linkedQuotations?.[0]?.id ?? input.quotationId ?? null,
@@ -864,6 +874,8 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
         customerPoNo: cpoNoForTarget,
         customerId: cust.id,
         customerSnapshot: { name: cust.name },
+        // the buying company's categories, as this company's own (matched by name)
+        categoryIds: await mapCategoriesToOrg(await poCategories(poId), targetOrgId),
         items: poItems.map((item) => ({
           rowNo: item.rowNo,
           productCode: item.productCode ?? "",
@@ -995,9 +1007,20 @@ async function applySalesOrderUpdate(
       : null;
   }
 
+  // categories: as chosen; else, when it had none yet, its CPOs' / quotations'; else unchanged
+  const oldCategories = (existing.categoryIds ?? []) as string[];
+  const categoryIds = input.categoryIds !== undefined
+    ? await mapCategoriesToOrg(input.categoryIds, existing.organizationId)
+    : oldCategories.length > 0 ? oldCategories
+    : await mapCategoriesToOrg(await (async () => {
+        const fromCpo = await cpoCategories(cpoIdsOf({ customerPoLinks: (input.customerPoLinks ?? existing.customerPoLinks) as { customerPoId: string }[] | null, customerPoId: input.customerPoId ?? existing.customerPoId }));
+        return fromCpo.length > 0 ? fromCpo : quotationCategories([existing.quotationId, ...((input.linkedQuotations ?? existing.linkedQuotations ?? []) as { id: string }[]).map((q) => q.id)]);
+      })(), existing.organizationId);
+
   const [row] = await db
     .update(salesOrder)
     .set({
+      categoryIds,
       customerId: input.customerId ?? existing.customerId,
       customerSnapshot,
       quotationId: input.linkedQuotations !== undefined
@@ -1112,6 +1135,9 @@ async function applySalesOrderUpdate(
     await db.update(customerPurchaseOrder).set({ salesOrderId: null, salesOrderNo: null })
       .where(and(eq(customerPurchaseOrder.organizationId, existing.organizationId), inArray(customerPurchaseOrder.id, removedCpoIds), eq(customerPurchaseOrder.salesOrderId, existing.id)));
   }
+
+  // its PRs and supplier POs follow, unless their categories were changed by hand
+  await cascadeCategories("so", existing.id, oldCategories, categoryIds);
 
   revalidatePath("/dashboard/sales/order");
   return row;

@@ -1,5 +1,6 @@
 "use server";
 
+import { cpoCategories, mapCategoriesToOrg, prCategories, resolveCategories, soCategories } from "@/lib/document-category/inherit";
 import { fillPurchaseOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
@@ -272,6 +273,7 @@ export async function maybeCreateIntercompanyPoForCaseInvoice(invoiceId: string)
       poNo,
       supplierId,
       sourceInvoiceId: invoiceId,
+      categoryIds: inv.categoryIds ?? [],
       subtotal: share.toFixed(2),
       grandTotal: share.toFixed(2),
       currency: "MYR", // invoice carries no currency field of its own — this app is MYR-only throughout
@@ -366,6 +368,8 @@ export interface CreatePurchaseOrderInput {
   // Left out, the default rule applies (see lib/intercompany/pricing.ts).
   pricingMethod?: string;
   pricingMarginPct?: string;
+  /** Document categories; undefined: its PR's / sales order's / customer POs' (on create) or unchanged (on update) */
+  categoryIds?: string[];
   items: PurchaseOrderItemInput[];
 }
 
@@ -1456,11 +1460,19 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   }
   const status = input.asDraft ? "draft" : "confirmed";
 
+  const categoryIds = await resolveCategories(orgId, input.categoryIds, async () => {
+    const fromPr = await prCategories(input.purchaseRequisitionId);
+    if (fromPr.length > 0) return fromPr;
+    const fromSo = await soCategories(input.salesOrderId);
+    return fromSo.length > 0 ? fromSo : cpoCategories(input.customerPoIds ?? []);
+  });
+
   const [row] = await db
     .insert(purchaseOrder)
     .values({
       id: nanoid(),
       organizationId: orgId,
+      categoryIds,
       purchaseRequisitionId: input.purchaseRequisitionId ?? null,
       prNo,
       poNo,
@@ -1747,9 +1759,20 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
     }
   }
 
+  // categories: as chosen; else, when it had none yet, its PR's / sales order's; else unchanged
+  const oldCategories = (existing.categoryIds ?? []) as string[];
+  const categoryIds = input.categoryIds !== undefined
+    ? await mapCategoriesToOrg(input.categoryIds, existing.organizationId)
+    : oldCategories.length > 0 ? oldCategories
+    : await resolveCategories(existing.organizationId, undefined, async () => {
+        const fromPr = await prCategories(existing.purchaseRequisitionId);
+        return fromPr.length > 0 ? fromPr : soCategories(input.salesOrderId ?? existing.salesOrderId);
+      });
+
   const [row] = await db
     .update(purchaseOrder)
     .set({
+      categoryIds,
       salesOrderId: input.salesOrderId ?? null,
       supplierId,
       supplierSnapshot,

@@ -345,9 +345,11 @@ function InvoiceForm({ suppliers, allCustomerPos, doData, initialCustomer, categ
   const [paymentTerms, setPaymentTerms] = useState(doData?.paymentTerm ?? "30 days");
   const [status, setStatus] = useState("draft");
   const [notes, setNotes] = useState("");
-  const [categoryIds, setCategoryIds] = useState<string[]>(() =>
-    categories.filter((c) => c.isDefault).map((c) => c.id),
-  );
+  // its DO's categories (they came down from the quotation), else the defaults
+  const [categoryIds, setCategoryIds] = useState<string[]>(() => {
+    const fromDo = (doData?.categoryIds ?? []).filter((id) => categories.some((c) => c.id === id));
+    return fromDo.length > 0 ? fromDo : categories.filter((c) => c.isDefault).map((c) => c.id);
+  });
 
   // Pricing
   const [overallDiscountPct, setOverallDiscountPct] = useState("0");

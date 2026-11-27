@@ -7,6 +7,7 @@ import Link from "next/link";
 import { SoReferenceDocs } from "@/components/sales-order/reference-docs";
 import { soLineQty } from "@/lib/sales-order/set-qty";
 import { AmendmentHistory } from "@/components/amendment-history";
+import { DocumentCategoriesCard } from "@/components/document-categories-card";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { exportSalesOrderExcel } from "@/lib/sales-order/export-excel";
@@ -438,6 +439,7 @@ export function SalesOrderDetailClient({
         {/* Left column — main info */}
         <div className="lg:col-span-2 space-y-5">
           <AmendmentHistory docType="so" docId={order.id} />
+          <DocumentCategoriesCard kind="so" docId={order.id} />
 
           {/* Customer */}
           <section className="border border-border rounded-xl p-4">

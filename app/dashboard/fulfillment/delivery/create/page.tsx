@@ -6,6 +6,7 @@ import { getSoRemainingItems } from "@/server/delivery-order";
 import { getDocumentCategories } from "@/server/document-category";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
+import { cpoCategories } from "@/lib/document-category/inherit";
 
 export default async function CreateDeliveryOrderPage({
   searchParams,
@@ -40,8 +41,14 @@ export default async function CreateDeliveryOrderPage({
 
       const remainingMap = new Map(remaining.map((r) => [r.soItemId, r]));
 
+      // the DO starts with its customer PO's categories (one CPO of a combined SO), else the SO's
+      const fromCpo = cpo?.customerPoId ? await cpoCategories([cpo.customerPoId]).catch(() => []) : [];
+      const own = new Set(categories.map((c) => c.id));
+      const categoryIds = (fromCpo.length > 0 ? fromCpo : ((so.categoryIds ?? []) as string[])).filter((id) => own.has(id));
+
       prefill = {
         salesOrderId: so.id,
+        categoryIds,
         salesOrderNo: so.soNo,
         soType: so.soType,
         proformaReason: so.proformaReason,

@@ -1,5 +1,6 @@
 "use server";
 
+import { doCategories, resolveCategories } from "@/lib/document-category/inherit";
 import { fillInvoiceItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
 import {
@@ -735,7 +736,8 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceR
       paymentTerms: input.paymentTerms ?? null,
       dueDate: input.dueDate ?? null,
       notes: input.notes ?? null,
-      categoryIds: input.categoryIds ?? [],
+      // not chosen: its DO's categories (as this company's own, when the DO is a sibling's)
+      categoryIds: input.categoryIds ?? await resolveCategories(orgId, undefined, () => doCategories(input.deliveryOrderId)),
       createdBy: userId,
     })
     .returning();
