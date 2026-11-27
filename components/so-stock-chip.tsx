@@ -14,7 +14,7 @@ import type { SoProcurement, SoProcurementStage } from "@/lib/sales-order/procur
 // "Partly received" — given soId. See lib/sales-order/stock-stage.ts.
 
 type Cfg = { label: string; className: string; title: string };
-const SHORT: Record<Exclude<SoProcurementStage, "pending-pr">, (p: SoProcurement) => Cfg> = {
+const SHORT: Record<Exclude<SoProcurementStage, "pending-pr" | "pending-do">, (p: SoProcurement) => Cfg> = {
   "pr-raised": (p) => ({
     label: "PR raised",
     className: "bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400",
@@ -78,11 +78,33 @@ export function SoStockChip({ status, stockReservationStatus, soId, className }:
   }, [lookUp, soId, stockReservationStatus]);
 
   const cfg: Cfg | null =
-    lookUp && proc && proc.stage !== "pending-pr" ? SHORT[proc.stage](proc)
+    lookUp && proc && proc.stage !== "pending-pr" && proc.stage !== "pending-do" ? SHORT[proc.stage](proc)
       : stage ? SO_STOCK_STAGE[stage]
       : isUnsubmittedSo(status) ? SO_DRAFT_TAG
       : null;
   if (!cfg) return null;
+  return (
+    <span title={cfg.title} className={cn("text-[10px] font-medium rounded px-1.5 py-0.5 shrink-0", cfg.className, className)}>
+      {cfg.label}
+    </span>
+  );
+}
+
+/**
+ * Where the order stands, on any of its documents (customer PO, PR, supplier PO): the same tag its
+ * sales order shows — Pending PR / PR raised / Awaiting supplier / Partly received / Pending DO.
+ * Nothing until the SO is confirmed, or when there's no SO.
+ */
+export function OrderProgressBadge({ soId, className }: { soId: string | null | undefined; className?: string }) {
+  const [proc, setProc] = useState<SoProcurement | null>(null);
+  useEffect(() => {
+    if (!soId) return;
+    let live = true;
+    loadProcurement(soId).then((v) => { if (live) setProc(v); });
+    return () => { live = false; };
+  }, [soId]);
+  if (!soId || !proc) return null;
+  const cfg = proc.stage === "pending-do" || proc.stage === "pending-pr" ? SO_STOCK_STAGE[proc.stage] : SHORT[proc.stage](proc);
   return (
     <span title={cfg.title} className={cn("text-[10px] font-medium rounded px-1.5 py-0.5 shrink-0", cfg.className, className)}>
       {cfg.label}

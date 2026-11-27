@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { pricingMethodLabel } from "@/lib/intercompany/methods";
 import { useEffect, useState } from "react";
@@ -497,6 +498,7 @@ export function PurchaseOrderDetailClient({
               </Button>
             )}
             <StatusBadge status={status} />
+            <OrderProgressBadge soId={order.salesOrderId} />
             <PendingActionBadge pendingReturnQty={order.pendingReturnQty} pendingRepairQty={order.pendingRepairQty} />
           </div>
         }

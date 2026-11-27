@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -178,11 +179,15 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: P
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-sm font-medium">
+                      {/* the number, and its revision below it */}
+                      <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
+                        <span className="font-mono text-sm font-medium">
                         <Highlight text={p.customerPoNo} query={search} />
+                        </span>
+                        <RevBadge revision={revs[p.id]} />
                       </span>
-                      <RevBadge revision={revs[p.id]} />
                       <StatusBadge status={p.status} />
+                      <OrderProgressBadge soId={p.salesOrderId} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />
                       </span>

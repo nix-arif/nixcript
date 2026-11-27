@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { navigateBack } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
 import {
@@ -79,6 +80,7 @@ export function CustomerPoDetailClient({
             </Button>
             <h1 className="text-lg font-bold font-mono">{cpo.customerPoNo}</h1>
             <StatusBadge label={cpoStatusCfg.label} color={cpoStatusCfg.color} />
+            <OrderProgressBadge soId={cpo.salesOrderId} />
             {organizationName && (
               <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                 {organizationName}

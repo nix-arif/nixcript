@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderProgressBadge } from "@/components/so-stock-chip";
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -251,6 +252,7 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
                       <div className="font-mono font-semibold text-sm">
                         <Highlight text={pr.prNo} query={search} />
                       </div>
+                      <OrderProgressBadge soId={pr.salesOrderId} />
                       {pr.prType && PR_TYPE_CFG[pr.prType] && (() => {
                         const cfg = PR_TYPE_CFG[pr.prType!];
                         const Icon = cfg.icon;

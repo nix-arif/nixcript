@@ -311,10 +311,13 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                   {/* Row 1: SO number + status + amount */}
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-mono text-sm font-semibold tracking-tight">
+                      {/* the number, and its revision below it */}
+                      <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
+                        <span className="font-mono text-sm font-semibold tracking-tight">
                         <Highlight text={o.soNo} query={search} />
+                        </span>
+                        <RevBadge revision={revs[o.id]} />
                       </span>
-                      <RevBadge revision={revs[o.id]} />
                       <StatusBadge status={o.status} />
                       <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} soId={o.id} />
                       {o.soType === "proforma" && (

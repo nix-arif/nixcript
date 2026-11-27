@@ -4,21 +4,24 @@
 //   pr-raised        a PR is in, no supplier PO confirmed yet
 //   ordered          a supplier PO is confirmed, nothing received: waiting for the supplier
 //   partly-received  goods have come in against it, but not all the stock is there yet
-// Server-only (reads the database); the tag is components/so-stock-chip.tsx.
+//   pending-do       its stock is reserved: ready for a delivery order
+// The same stage is shown on every document of the order (its customer PO, SO, PR and supplier POs).
+// Server-only (reads the database); the tags are components/so-stock-chip.tsx.
 
 import { and, eq, inArray, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import { goodsReceipt, purchaseOrder, purchaseRequisition, salesOrder } from "@/db/schema";
 
-export type SoProcurementStage = "pending-pr" | "pr-raised" | "ordered" | "partly-received";
+export type SoProcurementStage = "pending-pr" | "pr-raised" | "ordered" | "partly-received" | "pending-do";
 export type SoProcurement = { stage: SoProcurementStage; prNos: string[]; poNos: string[] };
 
 export async function soProcurementStages(orgIds: string[], soIds: string[]): Promise<Record<string, SoProcurement>> {
   if (soIds.length === 0 || orgIds.length === 0) return {};
   const sos = await db
-    .select({ id: salesOrder.id })
+    .select({ id: salesOrder.id, reservation: salesOrder.stockReservationStatus })
     .from(salesOrder)
-    .where(and(inArray(salesOrder.id, soIds), inArray(salesOrder.organizationId, orgIds), eq(salesOrder.status, "confirmed"), eq(salesOrder.stockReservationStatus, "insufficient")));
+    .where(and(inArray(salesOrder.id, soIds), inArray(salesOrder.organizationId, orgIds), eq(salesOrder.status, "confirmed"), inArray(salesOrder.stockReservationStatus, ["insufficient", "reserved"])));
+  const reserved = new Set(sos.filter((s) => s.reservation === "reserved").map((s) => s.id));
   const ids = sos.map((s) => s.id);
   if (ids.length === 0) return {};
 
@@ -45,7 +48,8 @@ export async function soProcurementStages(orgIds: string[], soIds: string[]): Pr
     const myPos = pos.filter((p) => (p.soId && p.soId === soId) || (p.prId && soOfPr.get(p.prId) === soId));
     const issued = myPos.filter((p) => p.status === "confirmed" || p.status === "fulfilled");
     const stage: SoProcurementStage =
-      myPos.some((p) => received.has(p.id) || p.status === "fulfilled") ? "partly-received"
+      reserved.has(soId) ? "pending-do"
+        : myPos.some((p) => received.has(p.id) || p.status === "fulfilled") ? "partly-received"
         : issued.length > 0 ? "ordered"
         : myPrs.length > 0 || myPos.length > 0 ? "pr-raised"
         : "pending-pr";

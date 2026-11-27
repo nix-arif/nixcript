@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { PoLegend } from "./_shared/po-legend";
 import { PoTrailHover } from "./po-trail-hover";
@@ -307,11 +308,15 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-sm font-medium">
+                        {/* the number, and its revision below it */}
+                        <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
+                          <span className="font-mono text-sm font-medium">
                           <Highlight text={o.poNo ?? o.id} query={search} />
+                          </span>
+                          <RevBadge revision={revs[o.id]} />
                         </span>
-                        <RevBadge revision={revs[o.id]} />
                         <StatusBadge status={o.status} />
+                        <OrderProgressBadge soId={o.salesOrderId} />
                         {o.prNo && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">
                             <ClipboardListIcon className="w-2.5 h-2.5 shrink-0" />

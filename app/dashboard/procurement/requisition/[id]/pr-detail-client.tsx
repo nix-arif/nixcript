@@ -1,5 +1,6 @@
 "use client";
 
+import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -506,6 +507,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
         <div>
           <p className="text-xs text-muted-foreground mb-0.5">Status</p>
           <StatusBadge status={pr.status} />
+          <OrderProgressBadge soId={pr.salesOrderId} className="ml-1.5" />
         </div>
         <div>
           <p className="text-xs text-muted-foreground mb-0.5">Requested By</p>
