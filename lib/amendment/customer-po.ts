@@ -7,8 +7,11 @@
 //     its totals recalculated, and it goes back for approval (no DO until it's approved again);
 //   - a supplier PO bought for it that nothing has been packed or received against yet has its lines
 //     changed to match (same PO number, new revision: the supplier gets an amended PO);
+//   - a PO to one of the owner's companies is also re-priced by its own pricing rule (e.g. the customer
+//     PO price − 5%), and the change carries on to that company's customer PO and sales order (and
+//     the POs it raised), as their own revision;
 //   - anything that can't be done that way is listed for the user (new products to buy, a supplier
-//     PO that has already shipped, a PO to a sibling company…).
+//     PO that has already shipped…).
 // It's refused while something would be wrong: a quantity below what was already delivered, or an
 // SO that has already been invoiced (that needs a credit note).
 //
@@ -24,9 +27,11 @@ import {
   documentAmendment,
   goodsReceipt,
   invoice,
+  organization,
   packingListItem,
   product,
   purchaseOrder,
+  purchaseOrderCustomerPo,
   purchaseOrderItem,
   purchaseRequisition,
   salesOrder,
@@ -37,7 +42,8 @@ import { soLineQty } from "@/lib/sales-order/set-qty";
 import { bookSetPriceAsUnitPrice } from "@/lib/quotation-set-price";
 import { discountFromQuotations, discountFromSaved, overallDiscountAmount } from "@/lib/sales-order/overall-discount";
 import { adjustReservation } from "@/lib/inventory/create-movement";
-import { sumTotals } from "@/lib/intercompany/pricing";
+import { createNotification, getSoApprovers } from "@/server/notifications";
+import { priceIntercompanyLines, sumTotals } from "@/lib/intercompany/pricing";
 
 type CpoRow = typeof customerPurchaseOrder.$inferSelect;
 type SoItemRow = typeof salesOrderItem.$inferSelect;
@@ -65,6 +71,9 @@ export type PoAction = {
   description: string | null;
   fromQty: number;
   toQty: number;
+  /** Unit price before / after (only a PO to one of your companies is re-priced) */
+  fromPrice: number;
+  toPrice: number;
   /** Changed on the supplier PO by the amendment (else the user does it, see why) */
   auto: boolean;
   why?: string;
@@ -74,10 +83,14 @@ export type AmendmentPlan = {
   cpoNo: string;
   cpoRevision: number;
   so: { id: string; soNo: string; status: string; revision: number; oldTotal: number; newTotal: number };
+  /** false: the customer PO and SO lines and total stay as they are (only supplier POs are re-priced) */
+  soChanged: boolean;
   lines: AmendLineChange[];
   poActions: PoAction[];
   /** What the user has to do by hand */
   followUps: string[];
+  /** Orders to your own companies that carry the change on (their customer PO and sales order follow) */
+  chain: string[];
   /** Why it can't be applied (empty: it can) */
   blockers: string[];
 };
@@ -165,11 +178,15 @@ export async function planCustomerPoAmendment(
   cpo: CpoRow,
   newItems: CpoLine[],
   newDiscount?: { pct: string | null; amt: string | null },
+  // cascade: the CPO a sibling company got from our PO, following our amendment (its SO may not be submitted yet)
+  opts: { cascade?: boolean } = {},
 ): Promise<AmendmentWork> {
   const orgId = cpo.organizationId;
   if (!cpo.salesOrderId) throw new Error("This customer PO has no sales order: edit it normally.");
   const [so] = await db.select().from(salesOrder).where(eq(salesOrder.id, cpo.salesOrderId));
-  if (!so || !LOCKING.has(so.status)) throw new Error("Its sales order isn't submitted yet: edit the customer PO (and the sales order) normally.");
+  if (!so || so.status === "cancelled" || (!opts.cascade && !LOCKING.has(so.status))) {
+    throw new Error("Its sales order isn't submitted yet: edit the customer PO (and the sales order) normally.");
+  }
 
   const blockers: string[] = [];
   const followUps: string[] = [];
@@ -324,7 +341,11 @@ export async function planCustomerPoAmendment(
   // the supplier POs bought for this SO, and which of them can still be amended
   const prIds = (await db.select({ id: purchaseRequisition.id }).from(purchaseRequisition).where(eq(purchaseRequisition.salesOrderId, so.id))).map((r) => r.id);
   const pos = await db
-    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status, supplierId: purchaseOrder.supplierId, supplierSnapshot: purchaseOrder.supplierSnapshot, createdAt: purchaseOrder.createdAt })
+    .select({
+      id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status, supplierId: purchaseOrder.supplierId,
+      supplierSnapshot: purchaseOrder.supplierSnapshot, createdAt: purchaseOrder.createdAt,
+      pricingMethod: purchaseOrder.pricingMethod, pricingMarginPct: purchaseOrder.pricingMarginPct, originalSupplierName: purchaseOrder.originalSupplierName,
+    })
     .from(purchaseOrder)
     .where(and(
       eq(purchaseOrder.organizationId, orgId),
@@ -343,11 +364,10 @@ export async function planCustomerPoAmendment(
     : [[], [], [], []];
   const packedSet = new Set(packed.map((r) => r.id));
   const receivedSet = new Set(received.map((r) => r.id));
-  const siblingSup = new Set(sups.filter((s) => s.linked).map((s) => s.id));
+  const sellerOf = new Map(sups.filter((s) => s.linked).map((s) => [s.id, s.linked as string]));
   const whyNot = (p: (typeof pos)[number]): string | undefined =>
     receivedSet.has(p.id) ? "goods have been received against it"
       : packedSet.has(p.id) ? "the supplier has packed it already"
-      : p.supplierId && siblingSup.has(p.supplierId) ? "it's an order to one of your companies (amend its sales order there)"
       : undefined;
 
   const poActions: PoAction[] = [];
@@ -361,7 +381,7 @@ export async function planCustomerPoAmendment(
       poActions.push({
         poId: p.id, poNo: p.poNo ?? "", supplierName: (p.supplierSnapshot as { name?: string } | null)?.name ?? null,
         poItemId: it.id, productCode: it.productCode ?? "", description: it.description,
-        fromQty: num(it.qty), toQty, auto: !why, why,
+        fromQty: num(it.qty), toQty, fromPrice: num(it.unitPrice), toPrice: num(it.unitPrice), auto: !why, why,
       });
     };
     if (delta > 0) {
@@ -383,6 +403,55 @@ export async function planCustomerPoAmendment(
       }
     }
   }
+  // a PO to one of your companies, priced from the customer PO (or another rule): priced again, with the amended lines
+  const chain: string[] = [];
+  for (const p of pos) {
+    const sellerOrgId = p.supplierId ? sellerOf.get(p.supplierId) : undefined;
+    if (!sellerOrgId || whyNot(p)) continue;
+    const mineOnPo = poItems.filter((i) => i.purchaseOrderId === p.id);
+    const lines = mineOnPo
+      .map((i) => {
+        const a = poActions.find((x) => x.poItemId === i.id);
+        return { ...i, qty: a ? qtyText(a.toQty) : i.qty };
+      })
+      .filter((i) => num(i.qty) > 1e-9);
+    const linkedCpos = await db
+      .select({ id: purchaseOrderCustomerPo.customerPoId })
+      .from(purchaseOrderCustomerPo)
+      .where(eq(purchaseOrderCustomerPo.purchaseOrderId, p.id));
+    const priced = await priceIntercompanyLines(
+      sellerOrgId, orgId, lines,
+      { method: p.pricingMethod, marginPct: p.pricingMarginPct },
+      linkedCpos.map((c) => c.id), p.originalSupplierName,
+      { id: cpo.id, items: newItems },
+    );
+    let changed = poActions.some((a) => a.poId === p.id);
+    priced.lines.forEach((l) => {
+      const before = mineOnPo.find((i) => i.id === l.id)!;
+      const toPrice = num(l.unitPrice);
+      if (Math.abs(toPrice - num(before.unitPrice)) < 0.005) return;
+      changed = true;
+      const a = poActions.find((x) => x.poItemId === l.id);
+      if (a) a.toPrice = toPrice;
+      else poActions.push({
+        poId: p.id, poNo: p.poNo ?? "", supplierName: (p.supplierSnapshot as { name?: string } | null)?.name ?? null,
+        poItemId: l.id, productCode: l.productCode ?? "", description: l.description,
+        fromQty: num(before.qty), toQty: num(before.qty), fromPrice: num(before.unitPrice), toPrice, auto: true,
+      });
+    });
+    if (changed) {
+      const [ic] = await db
+        .select({ soNo: salesOrder.soNo, orgName: organization.name })
+        .from(salesOrder)
+        .leftJoin(organization, eq(organization.id, salesOrder.organizationId))
+        .where(and(eq(salesOrder.sourcePurchaseOrderId, p.id), ne(salesOrder.status, "cancelled")))
+        .limit(1);
+      chain.push(ic
+        ? `${p.poNo} → ${ic.orgName ?? "the other company"}: its customer PO ${p.poNo} and sales order ${ic.soNo} are amended to match.`
+        : `${p.poNo}: ${(p.supplierSnapshot as { name?: string } | null)?.name ?? "the other company"} has no sales order for it yet.`);
+    }
+  }
+
   for (const a of poActions.filter((x) => !x.auto)) {
     followUps.push(`${a.poNo} (${a.supplierName ?? "supplier"}) can't be amended here because ${a.why}: ${a.productCode} ${qtyText(a.fromQty)} → ${qtyText(a.toQty)}, arrange it with the supplier.`);
   }
@@ -394,9 +463,11 @@ export async function planCustomerPoAmendment(
     lines,
     poActions,
     followUps,
+    chain,
     blockers,
+    soChanged: lines.length > 0 || Math.abs(num(so.grandTotal) - grand) >= 0.005,
   };
-  if (lines.length === 0 && Math.abs(num(so.grandTotal) - grand) < 0.005) blockers.push("Nothing to amend: the lines and amount are the same as the sales order's.");
+  if (!plan.soChanged && poActions.length === 0) blockers.push("Nothing to amend: the lines and amount are the same as the sales order's.");
   return { plan, so, oldSoItems, soOps: ops, soTotals };
 }
 
@@ -429,17 +500,22 @@ export async function applyAmendmentDownstream(
   reason: string,
   amendPoIds: string[],
   sourceAmendmentId: string,
-): Promise<{ soRevision: number; amendedPos: { poNo: string; revision: number }[] }> {
+  depth = 0,
+): Promise<{ soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[] }> {
   const { so, plan, soOps, soTotals, oldSoItems } = work;
   const orgId = so.organizationId;
+  // an SO that was submitted or approved goes back for approval; one not submitted yet stays as it is
+  const relock = LOCKING.has(so.status);
 
   // the stock it held is released: it's reserved again when the SO is approved
-  if (so.stockReservationStatus === "reserved") {
+  if (plan.soChanged && relock && so.stockReservationStatus === "reserved") {
     for (const i of oldSoItems) {
       if (i.productId) await adjustReservation({ orgId, productId: i.productId, warehouseLabel: "Default", delta: -soLineQty(i) });
     }
   }
 
+  // nothing changed on the SO (only supplier POs are re-priced): it keeps its lines, revision and approval
+  if (plan.soChanged) {
   for (const u of soOps.update) await db.update(salesOrderItem).set(u.set).where(eq(salesOrderItem.id, u.id));
   if (soOps.insert.length) await db.insert(salesOrderItem).values(soOps.insert);
   if (soOps.remove.length) await db.delete(salesOrderItem).where(inArray(salesOrderItem.id, soOps.remove));
@@ -447,14 +523,16 @@ export async function applyAmendmentDownstream(
   await db.update(salesOrder).set({
     ...soTotals,
     // back for approval (same number): no DO until it's approved again
-    status: "submitted",
-    submittedBy: userId,
-    submittedAt: new Date(),
-    approvedBy: null,
-    approvedAt: null,
-    stockReservationStatus: null,
-    stockReservedAt: null,
-    stockReservedBy: null,
+    ...(relock && {
+      status: "submitted",
+      submittedBy: userId,
+      submittedAt: new Date(),
+      approvedBy: null,
+      approvedAt: null,
+      stockReservationStatus: null,
+      stockReservedAt: null,
+      stockReservedBy: null,
+    }),
   }).where(eq(salesOrder.id, so.id));
 
   await db.insert(documentAmendment).values({
@@ -463,9 +541,11 @@ export async function applyAmendmentDownstream(
     changes: { summary: [...plan.lines.map(lineSummary), `Total ${money(plan.so.oldTotal)} → ${money(plan.so.newTotal)}`, `From customer PO ${plan.cpoNo} Rev ${plan.cpoRevision}`] },
     createdBy: userId,
   });
+  }
 
   // the supplier POs that can still be changed: same number, new revision
   const amendedPos: { poNo: string; revision: number }[] = [];
+  const chain: string[] = [];
   const chosen = plan.poActions.filter((a) => a.auto && amendPoIds.includes(a.poId));
   for (const poId of [...new Set(chosen.map((a) => a.poId))]) {
     const acts = chosen.filter((a) => a.poId === poId);
@@ -473,9 +553,8 @@ export async function applyAmendmentDownstream(
       if (a.toQty <= 1e-9) {
         await db.delete(purchaseOrderItem).where(eq(purchaseOrderItem.id, a.poItemId));
       } else {
-        const [it] = await db.select({ unitPrice: purchaseOrderItem.unitPrice }).from(purchaseOrderItem).where(eq(purchaseOrderItem.id, a.poItemId));
         await db.update(purchaseOrderItem)
-          .set({ qty: qtyText(a.toQty), totalPrice: (a.toQty * num(it?.unitPrice)).toFixed(2) })
+          .set({ qty: qtyText(a.toQty), unitPrice: a.toPrice.toFixed(2), totalPrice: (a.toQty * a.toPrice).toFixed(2) })
           .where(eq(purchaseOrderItem.id, a.poItemId));
       }
     }
@@ -488,15 +567,82 @@ export async function applyAmendmentDownstream(
       id: nanoid(), organizationId: orgId, docType: "po", docId: poId, docNo: acts[0].poNo,
       revision, reason, sourceAmendmentId,
       changes: { summary: [
-        ...acts.map((a) => (a.toQty <= 1e-9 ? `${a.productCode}: removed (was ${qtyText(a.fromQty)})` : `${a.productCode}: ${qtyText(a.fromQty)} → ${qtyText(a.toQty)}`)),
-        `For ${so.soNo} Rev ${plan.so.revision} (customer PO ${plan.cpoNo} Rev ${plan.cpoRevision})`,
+        ...acts.map((a) => {
+          if (a.toQty <= 1e-9) return `${a.productCode}: removed (was ${qtyText(a.fromQty)})`;
+          const q = Math.abs(a.fromQty - a.toQty) > 1e-9 ? ` ${qtyText(a.fromQty)} → ${qtyText(a.toQty)}` : "";
+          const pr = Math.abs(a.fromPrice - a.toPrice) >= 0.005 ? ` @ ${money(a.fromPrice)} → ${money(a.toPrice)}` : "";
+          return `${a.productCode}:${q}${pr}`;
+        }),
+        plan.soChanged ? `For ${so.soNo} Rev ${plan.so.revision} (customer PO ${plan.cpoNo} Rev ${plan.cpoRevision})` : `Re-priced for ${so.soNo} (customer PO ${plan.cpoNo})`,
       ] },
       createdBy: userId,
     });
     amendedPos.push({ poNo: acts[0].poNo, revision });
+    // a PO to one of your companies: its customer PO and sales order follow
+    chain.push(...(await cascadeToSibling(poId, userId, reason, depth)));
   }
 
-  return { soRevision: plan.so.revision, amendedPos };
+  return { soRevision: plan.soChanged ? plan.so.revision : plan.so.revision - 1, amendedPos, chain };
+}
+
+// Our PO to a sibling company was amended: the customer PO it became there (and its sales order, and
+// the POs that company raised) follows it, as their own revision.
+async function cascadeToSibling(poId: string, userId: string, reason: string, depth: number): Promise<string[]> {
+  if (depth >= 3) return [];
+  const [icSo] = await db
+    .select()
+    .from(salesOrder)
+    .where(and(eq(salesOrder.sourcePurchaseOrderId, poId), ne(salesOrder.status, "cancelled")))
+    .limit(1);
+  if (!icSo?.customerPoId) return [];
+  const [[icCpo], [po], [org]] = await Promise.all([
+    db.select().from(customerPurchaseOrder).where(eq(customerPurchaseOrder.id, icSo.customerPoId)),
+    db.select({ poNo: purchaseOrder.poNo, grandTotal: purchaseOrder.grandTotal }).from(purchaseOrder).where(eq(purchaseOrder.id, poId)),
+    db.select({ name: organization.name }).from(organization).where(eq(organization.id, icSo.organizationId)),
+  ]);
+  if (!icCpo || !po) return [];
+  const orgName = org?.name ?? "The other company";
+
+  // its lines are our PO's lines: match them by product code, in order
+  const poLines = await db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, poId)).orderBy(asc(purchaseOrderItem.rowNo));
+  const queue = new Map<string, typeof poLines>();
+  for (const l of poLines) queue.set(norm(l.productCode), [...(queue.get(norm(l.productCode)) ?? []), l]);
+  const newItems: CpoLine[] = (icCpo.items ?? []).flatMap((i) => {
+    const l = queue.get(norm(i.productCode))?.shift();
+    return l ? [{ ...i, qty: l.qty ?? "1", unitPrice: l.unitPrice ?? "0", discountPct: "0", totalPrice: l.totalPrice ?? "0" }] : [];
+  });
+
+  let work: AmendmentWork;
+  try {
+    work = await planCustomerPoAmendment(icCpo, newItems, undefined, { cascade: true });
+  } catch (e) {
+    return [`${orgName}: ${icSo.soNo} wasn't updated (${e instanceof Error ? e.message : "error"}). Update it there.`];
+  }
+  const blockers = work.plan.blockers.filter((b) => !b.startsWith("Nothing to amend"));
+  if (blockers.length > 0) return [`${orgName}: ${icSo.soNo} wasn't updated: ${blockers.join(" ")}`];
+  if (work.plan.blockers.length > 0) return []; // nothing changed for it
+
+  await db.update(customerPurchaseOrder).set({ items: newItems, amount: po.grandTotal }).where(eq(customerPurchaseOrder.id, icCpo.id));
+  const cpoAmendmentId = work.plan.soChanged ? await recordCpoAmendment(icCpo, userId, reason, work.plan) : nanoid();
+  const autoPoIds = [...new Set(work.plan.poActions.filter((a) => a.auto).map((a) => a.poId))];
+  const down = await applyAmendmentDownstream(work, userId, reason, autoPoIds, cpoAmendmentId, depth + 1);
+
+  // its approvers: the SO is back for approval there
+  if (work.plan.soChanged && LOCKING.has(icSo.status)) {
+    const approvers = await getSoApprovers(icSo.organizationId).catch(() => [] as string[]);
+    await Promise.all(approvers.filter((u) => u !== userId).map((u) => createNotification({
+      organizationId: icSo.organizationId, userId: u, type: "so:submitted",
+      title: `SO ${icSo.soNo} amended (Rev ${down.soRevision}) — needs approval`,
+      body: `Customer PO ${icCpo.customerPoNo} was amended: ${reason}`,
+      link: `/dashboard/sales/order/${icSo.id}`,
+    }).catch(() => {})));
+  }
+  const pos = down.amendedPos.map((x) => `${x.poNo} Rev ${x.revision}`).join(", ");
+  return [
+    `${orgName}: customer PO ${icCpo.customerPoNo} Rev ${work.plan.cpoRevision}, sales order ${icSo.soNo} Rev ${down.soRevision}${pos ? `, ${pos}` : ""}`,
+    ...down.chain,
+    ...work.plan.followUps.map((f) => `${orgName}: ${f}`),
+  ];
 }
 
 export type AmendmentRecord = {

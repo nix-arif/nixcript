@@ -52,6 +52,8 @@ export async function priceIntercompanyLines<T extends PricedLine>(
   chosen?: PricingChoice,
   customerPoIds: string[] = [], // the customer POs this PO is for (for "Customer PO price − discount %")
   supplierName?: string | null, // the supplier the PO is really for, when it was routed here (for supplier exceptions)
+  // a customer PO's lines as they will be (an amendment not saved yet): priced from these instead of the saved ones
+  cpoOverride?: { id: string; items: NonNullable<(typeof customerPurchaseOrder.$inferSelect)["items"]> },
 ): Promise<{ lines: T[]; method: PricingMethod; marginPct: string | null; source: PricingSource; kept: string[] }> {
   const resolved = await resolvePricingMethod(sellerOrgId, buyerOrgId, chosen, supplierName);
   const { method } = resolved;
@@ -70,12 +72,12 @@ export async function priceIntercompanyLines<T extends PricedLine>(
     discount = d;
   }
   // the customer POs of the buying organization this PO is for, with the lines the price is taken from
-  const cpos = method === "cpo_less" && customerPoIds.length > 0
+  const cpos = (method === "cpo_less" && customerPoIds.length > 0
     ? await db
         .select({ id: customerPurchaseOrder.id, customerPoNo: customerPurchaseOrder.customerPoNo, currency: customerPurchaseOrder.currency, items: customerPurchaseOrder.items })
         .from(customerPurchaseOrder)
         .where(and(eq(customerPurchaseOrder.organizationId, buyerOrgId), inArray(customerPurchaseOrder.id, customerPoIds)))
-    : [];
+    : []).map((c) => (cpoOverride && c.id === cpoOverride.id ? { ...c, items: cpoOverride.items } : c));
 
   const codes = [...new Set(lines.map((l) => norm(l.productCode)).filter(Boolean))];
   const products = method === "price_list" || codes.length === 0

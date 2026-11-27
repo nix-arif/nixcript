@@ -62,7 +62,10 @@ export function AmendPanel({
     try {
       const r = await amendCustomerPo({ ...p, reason: reason.trim(), amendPoIds: Object.entries(pos).filter(([, on]) => on).map(([id]) => id) });
       const poText = r.amendedPos.map((x) => `${x.poNo} Rev ${x.revision}`).join(", ");
-      toast.success(`Amended: customer PO Rev ${r.cpoRevision}, ${r.soNo} Rev ${r.soRevision} (back for approval)${poText ? `, ${poText}` : ""}.`, { duration: 10000 });
+      toast.success(plan?.soChanged === false
+        ? `Re-priced: ${poText || "no supplier PO changed"}.`
+        : `Amended: customer PO Rev ${r.cpoRevision}, ${r.soNo} Rev ${r.soRevision} (back for approval)${poText ? `, ${poText}` : ""}.`, { duration: 10000 });
+      if (r.chain.length > 0) toast.info(`Also updated: ${r.chain.join(" · ")}`, { duration: 15000 });
       if (r.followUps.length > 0) toast.warning(`Still to do: ${r.followUps.join(" ")}`, { duration: 20000 });
       onDone();
     } catch (e) {
@@ -100,7 +103,9 @@ export function AmendPanel({
 
           <div>
             <p className="mb-1 font-semibold">
-              Customer PO {plan.cpoNo} → Rev {plan.cpoRevision} · Sales order {plan.so.soNo} → Rev {plan.so.revision}
+              {plan.soChanged
+                ? <>Customer PO {plan.cpoNo} → Rev {plan.cpoRevision} · Sales order {plan.so.soNo} → Rev {plan.so.revision}</>
+                : <>Customer PO {plan.cpoNo} and sales order {plan.so.soNo} stay as they are: only the supplier POs below are re-priced.</>}
             </p>
             {plan.lines.length > 0 ? (
               <table className="w-full">
@@ -122,10 +127,12 @@ export function AmendPanel({
                 </tbody>
               </table>
             ) : <p className="text-muted-foreground">No line changes.</p>}
-            <p className="mt-1">
-              Sales order total: {money(plan.so.oldTotal)} <ArrowRightIcon className="inline h-3 w-3" /> <b>{money(plan.so.newTotal)}</b>.
-              It goes back for approval; no DO until it&apos;s approved again.
-            </p>
+            {plan.soChanged && (
+              <p className="mt-1">
+                Sales order total: {money(plan.so.oldTotal)} <ArrowRightIcon className="inline h-3 w-3" /> <b>{money(plan.so.newTotal)}</b>.
+                It goes back for approval; no DO until it&apos;s approved again.
+              </p>
+            )}
           </div>
 
           {poIds.length > 0 && (
@@ -145,7 +152,13 @@ export function AmendPanel({
                     <ul className="mt-1 list-disc pl-6 text-muted-foreground">
                       {acts.map((a) => (
                         <li key={a.poItemId}>
-                          <span className="font-mono">{a.productCode}</span>: {qty(a.fromQty)} → {a.toQty <= 0 ? "removed" : qty(a.toQty)}
+                          <span className="font-mono">{a.productCode}</span>:{" "}
+                          {a.toQty <= 0 ? "removed" : (
+                            <>
+                              {a.fromQty !== a.toQty && <>{qty(a.fromQty)} → {qty(a.toQty)}</>}
+                              {Math.abs(a.fromPrice - a.toPrice) >= 0.005 && <> {a.fromQty !== a.toQty ? "· " : ""}{money(a.fromPrice)} → <b>{money(a.toPrice)}</b> each</>}
+                            </>
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -153,6 +166,13 @@ export function AmendPanel({
                 );
               })}
               <p className="text-muted-foreground">Send the amended PO to the supplier after applying (its PDF says Amendment Rev N).</p>
+            </div>
+          )}
+
+          {plan.chain.length > 0 && (
+            <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-violet-900 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-200">
+              <p className="font-semibold">Also updated (your other companies)</p>
+              <ul className="list-disc pl-4">{plan.chain.map((c) => <li key={c}>{c}</li>)}</ul>
             </div>
           )}
 

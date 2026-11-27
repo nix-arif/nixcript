@@ -692,7 +692,7 @@ export async function previewCustomerPoAmendment(input: UpdateCustomerPoInput): 
  */
 export async function amendCustomerPo(
   input: UpdateCustomerPoInput & { reason: string; amendPoIds: string[] },
-): Promise<{ cpoRevision: number; soNo: string; soRevision: number; amendedPos: { poNo: string; revision: number }[]; followUps: string[] }> {
+): Promise<{ cpoRevision: number; soNo: string; soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[]; followUps: string[] }> {
   const { reason, amendPoIds, ...update } = input;
   if (!reason?.trim()) throw new Error("Give the reason for the amendment (e.g. the customer's amendment letter).");
   const { existing, userId } = await cpoForAmendment(update.id);
@@ -701,12 +701,13 @@ export async function amendCustomerPo(
   await nextRevision("cpo", existing.id); // the amendments table must be there before anything is changed
 
   const row = await applyCustomerPoUpdate(existing, update, userId, { amending: true });
-  const cpoAmendmentId = await recordCpoAmendment(row, userId, reason.trim(), work.plan);
+  // only supplier POs re-priced (the CPO's lines are as they were): the CPO gets no new revision
+  const cpoAmendmentId = work.plan.soChanged ? await recordCpoAmendment(row, userId, reason.trim(), work.plan) : nanoid();
   const down = await applyAmendmentDownstream(work, userId, reason.trim(), amendPoIds, cpoAmendmentId);
 
   // the sales approvers: the SO is back for approval
   const approvers = await getSoApprovers(existing.organizationId).catch(() => [] as string[]);
-  await Promise.all(approvers.filter((u) => u !== userId).map((u) => createNotification({
+  if (work.plan.soChanged) await Promise.all(approvers.filter((u) => u !== userId).map((u) => createNotification({
     organizationId: existing.organizationId,
     userId: u,
     type: "so:submitted",
@@ -719,7 +720,7 @@ export async function amendCustomerPo(
   revalidatePath(`/dashboard/sales/order/${work.so.id}`);
   revalidatePath("/dashboard/sales/order");
   revalidatePath("/dashboard/procurement/purchase-order");
-  return { cpoRevision: work.plan.cpoRevision, soNo: work.so.soNo, soRevision: down.soRevision, amendedPos: down.amendedPos, followUps: work.plan.followUps };
+  return { cpoRevision: work.plan.soChanged ? work.plan.cpoRevision : work.plan.cpoRevision - 1, soNo: work.so.soNo, soRevision: down.soRevision, amendedPos: down.amendedPos, chain: down.chain, followUps: work.plan.followUps };
 }
 
 // The CPO number is copied onto the documents made from the CPO (sales order, PR, internal PO, DO,
