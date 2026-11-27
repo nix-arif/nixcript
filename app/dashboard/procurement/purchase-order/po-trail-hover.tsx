@@ -11,13 +11,19 @@ import {
   PencilIcon,
   ShoppingCartIcon,
   XCircleIcon,
+  FilePenLineIcon,
 } from "lucide-react";
 import { getPurchaseOrderHistory, getPurchaseOrderHistoryCentralized, type PurchaseOrderHistory } from "@/server/purchase-order";
+import { amendmentEvents } from "@/components/amendment-history";
 import { HistoryHover, historyWord as word, type HistoryEvent } from "@/components/history-hover";
 
 const amount = (v: string, currency: string) =>
   `${currency === "MYR" ? "RM" : currency} ${Number(v || 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
 
+
+// its amendments (Rev 1, Rev 2…) as amber events
+const amended = (evs: Awaited<ReturnType<typeof amendmentEvents>>): HistoryEvent[] =>
+  evs.map((e) => ({ ...e, tone: "amber" as const, icon: <FilePenLineIcon className="w-3 h-3" /> }));
 // A Supplier PO's fulfilment trail: what it was raised for, its approval, and the
 // supplier's side of it (packing lists, goods received).
 function buildPoHistory(h: PurchaseOrderHistory): HistoryEvent[] {
@@ -70,7 +76,10 @@ function buildPoHistory(h: PurchaseOrderHistory): HistoryEvent[] {
 export function PoTrailHover({ id, poNo, centralized = false, children }: { id: string; poNo: string; centralized?: boolean; children: React.ReactElement }) {
   const load = centralized ? getPurchaseOrderHistoryCentralized : getPurchaseOrderHistory;
   return (
-    <HistoryHover label={poNo} load={() => load(id).then((h) => (h ? buildPoHistory(h) : null))}>
+    <HistoryHover label={poNo} load={async () => {
+      const [h, revs] = await Promise.all([load(id), amendmentEvents("po", id)]);
+      return h ? [...buildPoHistory(h), ...amended(revs)] : null;
+    }}>
       {children}
     </HistoryHover>
   );

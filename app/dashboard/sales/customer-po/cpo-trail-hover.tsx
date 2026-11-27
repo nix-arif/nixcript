@@ -11,10 +11,16 @@ import {
   TruckIcon,
   WalletIcon,
   XCircleIcon,
+  FilePenLineIcon,
 } from "lucide-react";
 import { getCustomerPoForTracking, type CustomerPoTrackingData } from "@/server/customer-purchase-order";
+import { amendmentEvents } from "@/components/amendment-history";
 import { HistoryHover, historyWord as word, historyMoney as money, type HistoryEvent } from "@/components/history-hover";
 
+
+// its amendments (Rev 1, Rev 2…) as amber events
+const amended = (evs: Awaited<ReturnType<typeof amendmentEvents>>): HistoryEvent[] =>
+  evs.map((e) => ({ ...e, tone: "amber" as const, icon: <FilePenLineIcon className="w-3 h-3" /> }));
 // A short, factual history built from what the system already records
 function buildTrail(t: CustomerPoTrackingData): HistoryEvent[] {
   const ev: HistoryEvent[] = [];
@@ -62,7 +68,13 @@ export function CpoTrailHover({
   id, poNo, children,
 }: { id: string; poNo: string; children: React.ReactElement }) {
   return (
-    <HistoryHover label={poNo} load={() => getCustomerPoForTracking(id).then((d) => (d ? buildTrail(d) : null))}>
+    <HistoryHover label={poNo} load={async () => {
+      const d = await getCustomerPoForTracking(id);
+      if (!d) return null;
+      // its own amendments, and its sales order's
+      const [mine, so] = await Promise.all([amendmentEvents("cpo", id), d.so ? amendmentEvents("so", d.so.id, `Sales order ${d.so.soNo}`) : []]);
+      return [...buildTrail(d), ...amended(mine), ...amended(so)];
+    }}>
       {children}
     </HistoryHover>
   );

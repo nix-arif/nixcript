@@ -12,10 +12,16 @@ import {
   TruckIcon,
   WalletIcon,
   XCircleIcon,
+  FilePenLineIcon,
 } from "lucide-react";
 import { getSalesOrderHistory, getSalesOrderHistoryCentralized, type SalesOrderHistory } from "@/server/sales-order";
+import { amendmentEvents } from "@/components/amendment-history";
 import { HistoryHover, historyWord as word, historyMoney as money, type HistoryEvent } from "@/components/history-hover";
 
+
+// its amendments (Rev 1, Rev 2…) as amber events
+const amended = (evs: Awaited<ReturnType<typeof amendmentEvents>>): HistoryEvent[] =>
+  evs.map((e) => ({ ...e, tone: "amber" as const, icon: <FilePenLineIcon className="w-3 h-3" /> }));
 // The same kind of short, factual history as a Customer PO's hover card, from
 // the SO's side: where it came from, its approval, and everything raised from it.
 function buildSoHistory(h: SalesOrderHistory): HistoryEvent[] {
@@ -69,7 +75,10 @@ function buildSoHistory(h: SalesOrderHistory): HistoryEvent[] {
 export function SoTrailHover({ id, soNo, centralized = false, children }: { id: string; soNo: string; centralized?: boolean; children: React.ReactElement }) {
   const load = centralized ? getSalesOrderHistoryCentralized : getSalesOrderHistory;
   return (
-    <HistoryHover label={soNo} load={() => load(id).then((h) => (h ? buildSoHistory(h) : null))}>
+    <HistoryHover label={soNo} load={async () => {
+      const [h, revs] = await Promise.all([load(id), amendmentEvents("so", id)]);
+      return h ? [...buildSoHistory(h), ...amended(revs)] : null;
+    }}>
       {children}
     </HistoryHover>
   );

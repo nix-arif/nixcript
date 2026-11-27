@@ -5,6 +5,8 @@
 // and the centralized twin). The detail page keeps only the compact Progress
 // summary, built from the same trailStates() so the two never disagree.
 
+import { DocRevBadge } from "@/components/amendment-history";
+import type { DocType } from "@/lib/amendment/customer-po";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { navigateBack } from "@/hooks/use-back";
 import { useState } from "react";
@@ -199,9 +201,11 @@ function DocActionsMenu({ actions, busy, onAction }: { actions: TrailAction[]; b
 }
 
 function DocCard({
-  docNo, statusLabel, statusColor, meta, onClick, actions, busy = false, onAction,
+  docNo, rev, statusLabel, statusColor, meta, onClick, actions, busy = false, onAction,
 }: {
   docNo: string;
+  /** an amendable document: its Rev N shows below the number */
+  rev?: { docType: DocType; docId: string };
   statusLabel: string;
   statusColor: string;
   meta?: React.ReactNode;
@@ -218,7 +222,10 @@ function DocCard({
         onClick && "cursor-pointer hover:bg-muted/30 transition-colors",
       )}
     >
-      <span className="font-mono text-sm font-medium flex-1 min-w-0 truncate">{docNo}</span>
+      <span className="flex-1 min-w-0 flex flex-col items-start gap-0.5 leading-tight">
+        <span className="font-mono text-sm font-medium max-w-full truncate">{docNo}</span>
+        {rev && <DocRevBadge docType={rev.docType} docId={rev.docId} />}
+      </span>
       <StatusBadge label={statusLabel} color={statusColor} />
       {meta && <div className="text-[11px] text-muted-foreground shrink-0">{meta}</div>}
       {onClick && <ExternalLinkIcon className="w-3 h-3 text-muted-foreground shrink-0" />}
@@ -341,6 +348,7 @@ function IntercompanyLegBody({ leg }: { leg: IntercompanyLeg }) {
         {leg.so && soCfg ? (
           <DocCard
             docNo={leg.so.soNo}
+            rev={{ docType: "so", docId: leg.so.id }}
             statusLabel={soCfg.label}
             statusColor={soCfg.color}
             meta={<span className="flex items-center gap-2"><SoStockChip status={leg.so.status} stockReservationStatus={null} />{fmtDate(leg.so.createdAt)}</span>}
@@ -364,6 +372,7 @@ function IntercompanyLegBody({ leg }: { leg: IntercompanyLeg }) {
                   <DocCard
                     key={po.id}
                     docNo={po.poNo ?? po.prNo ?? po.id}
+                    rev={{ docType: "po", docId: po.id }}
                     statusLabel={cfg.label}
                     statusColor={cfg.color}
                     meta={fmtDate(po.createdAt)}
@@ -472,6 +481,7 @@ export function FulfilmentTrailClient({
           <TrailStep state={cpoState} icon={FileTextIcon} label="Customer PO">
             <DocCard
               docNo={cpo.customerPoNo}
+              rev={{ docType: "cpo", docId: cpo.id }}
               statusLabel={cpoStatusCfg.label}
               statusColor={cpoStatusCfg.color}
               meta={fmtDate(cpo.receivedDate ?? cpo.createdAt)}
@@ -487,6 +497,7 @@ export function FulfilmentTrailClient({
               <>
                 <DocCard
                   docNo={so.soNo}
+                  rev={{ docType: "so", docId: so.id }}
                   statusLabel={soStatusCfg(so.status).label}
                   statusColor={soStatusCfg(so.status).color}
                   meta={<span className="flex items-center gap-2"><SoStockChip status={so.status} stockReservationStatus={so.stockReservationStatus} soId={so.id} />{fmtDate(so.createdAt)}</span>}
@@ -556,6 +567,7 @@ export function FulfilmentTrailClient({
                     <DocCard
                       key={po.id}
                       docNo={po.poNo ?? po.prNo ?? po.id}
+                      rev={{ docType: "po", docId: po.id }}
                       statusLabel={cfg.label}
                       statusColor={cfg.color}
                       meta={fmtDate(po.createdAt)}

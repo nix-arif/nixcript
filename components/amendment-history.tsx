@@ -89,3 +89,44 @@ export function RevBadge({ revision }: { revision?: number }) {
     </span>
   );
 }
+
+// Rev badges that look themselves up: every badge on the page asks in one go, per kind of document
+const revQueue: Record<DocType, Map<string, ((rev: number) => void)[]>> = { cpo: new Map(), so: new Map(), po: new Map() };
+const revTimer: Partial<Record<DocType, ReturnType<typeof setTimeout>>> = {};
+function loadRevision(docType: DocType, docId: string): Promise<number> {
+  return new Promise((resolve) => {
+    const q = revQueue[docType];
+    q.set(docId, [...(q.get(docId) ?? []), resolve]);
+    if (revTimer[docType]) return;
+    revTimer[docType] = setTimeout(() => {
+      delete revTimer[docType];
+      const batch = revQueue[docType];
+      revQueue[docType] = new Map();
+      getDocumentRevisions(docType, [...batch.keys()])
+        .then((r) => batch.forEach((cbs, id) => cbs.forEach((cb) => cb(r[id] ?? 0))))
+        .catch(() => batch.forEach((cbs) => cbs.forEach((cb) => cb(0))));
+    }, 0);
+  });
+}
+
+/** "Rev N" for one document, looked up by itself (nothing when it was never amended). */
+export function DocRevBadge({ docType, docId }: { docType: DocType; docId: string | null | undefined }) {
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    if (!docId) return;
+    let live = true;
+    loadRevision(docType, docId).then((r) => { if (live) setRev(r); });
+    return () => { live = false; };
+  }, [docType, docId]);
+  return <RevBadge revision={rev} />;
+}
+
+/** A document's amendments as history events (for the hover history cards). */
+export async function amendmentEvents(docType: DocType, docId: string, label?: string) {
+  const rows = await getDocumentAmendments(docType, docId).catch(() => [] as AmendmentRecord[]);
+  return rows.map((r) => ({
+    at: new Date(r.createdAt),
+    title: `${label ? `${label} ` : ""}amended — Rev ${r.revision}`,
+    detail: [r.reason, r.createdByName && `by ${r.createdByName}`, ...r.summary.slice(0, 3)].filter(Boolean).join(" · "),
+  }));
+}
