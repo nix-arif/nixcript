@@ -74,9 +74,17 @@ export async function computeStockCheckItems(orgId: string, soId: string) {
 
   const levelMap = new Map(levels.map((l) => [l.productId, l]));
 
-  const result: StockCheckItem[] = productItems.map((item) => {
-    const level = levelMap.get(item.productId!);
+  // One row per product: the same product on several lines (e.g. in two sets) needs their total,
+  // checked once against what's available
+  const needByProduct = new Map<string, { item: (typeof productItems)[number]; required: number }>();
+  for (const item of productItems) {
+    const cur = needByProduct.get(item.productId!);
     const required = soLineQty(item); // × the number of sets
+    if (cur) cur.required += required;
+    else needByProduct.set(item.productId!, { item, required });
+  }
+  const result: StockCheckItem[] = [...needByProduct.values()].map(({ item, required }) => {
+    const level = levelMap.get(item.productId!);
     const onHand = level ? parseFloat(level.quantity) : 0;
     const reserved = level ? parseFloat(level.reservedQty) : 0;
     const available = Math.max(0, onHand - reserved);
