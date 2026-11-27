@@ -1,5 +1,7 @@
 "use client";
 
+import { CategoryChip } from "@/components/document-categories-card";
+import type { CategoryOption } from "@/server/document-category-chain";
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -104,6 +106,7 @@ export function EditCustomerPoClient({
   updateFn = updateCustomerPo,
   detailHref,
   soLock = null,
+  categories = [],
 }: {
   cpo: CustomerPo;
   members: OrgMember[];
@@ -112,6 +115,8 @@ export function EditCustomerPoClient({
   detailHref?: string;
   /** Its sales order is submitted or later: lines, prices, amount and discount are locked */
   soLock?: CpoSoLock | null;
+  /** Its company's document categories, to pick from */
+  categories?: CategoryOption[];
 }) {
   const router = useRouter();
   // Amend: a CPO locked by its SO is changed through an amendment (amend-panel.tsx)
@@ -235,6 +240,9 @@ export function EditCustomerPoClient({
   }, [searchParams]);
   const [status,         setStatus]         = useState(cpo.status === "draft" ? "received" : (cpo.status ?? "received"));
   const [notes,          setNotes]          = useState(cpo.notes ?? "");
+  // document categories (from its quotation at first); a change also reaches its SO, PRs and supplier POs
+  const [categoryIds, setCategoryIds] = useState<string[]>(() =>
+    ((cpo.categoryIds ?? []) as string[]).filter((id) => categories.some((c) => c.id === id)));
 
   const [cashSaleLoading, setCashSaleLoading] = useState(false);
   const [poTbcLoading, setPoTbcLoading] = useState(false);
@@ -872,6 +880,7 @@ export function EditCustomerPoClient({
     salesPersonName: salesPersons[0]?.name || undefined,
     associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined,
     notes:           notes || undefined,
+    categoryIds,
     receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
     deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
     deliveryAddress: deliveryAddress.trim() || undefined,
@@ -1647,6 +1656,22 @@ export function EditCustomerPoClient({
               </table>
             </div>
           </fieldset>
+        )}
+
+        {/* ── Categories ── */}
+        {categories.length > 0 && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">Categories</Label>
+            <div className="flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <CategoryChip key={c.id} option={c} selected={categoryIds.includes(c.id)}
+                  onClick={() => setCategoryIds((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]))} />
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Saving also changes its sales order, PRs and supplier POs that still have the old categories. DOs and invoices already made keep theirs.
+            </p>
+          </div>
         )}
 
         {/* ── 5. Notes ── */}

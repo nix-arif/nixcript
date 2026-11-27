@@ -1,5 +1,7 @@
 "use client";
 
+import { CategoryChip } from "@/components/document-categories-card";
+import type { CategoryOption } from "@/server/document-category-chain";
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -97,11 +99,20 @@ function discountForSave(d: OverallDiscount, items: Parameters<typeof sumLines>[
   return d.mode === "pct" ? { overallDiscountPct: d.pct || "0", overallDiscountAmt: amt } : { overallDiscountPct: "0", overallDiscountAmt: amt };
 }
 
-export function CreateCustomerPoClient({ members, currentUserName = "" }: { members: OrgMember[]; currentUserName?: string }) {
+export function CreateCustomerPoClient({ members, currentUserName = "", categories = [] }: { members: OrgMember[]; currentUserName?: string; categories?: CategoryOption[] }) {
   const router = useRouter();
 
   // ── Quotations (multiple) ──────────────────────────────────────────────────
   const [linkedQuotations, setLinkedQuotations] = useState<LinkedQuotation[]>([]);
+  // document categories: its quotations' to begin with (as they're linked), until the user picks their own
+  const [categoryIds, setCategoryIds] = useState<string[]>([]);
+  const [categoriesPicked, setCategoriesPicked] = useState(false);
+  const quotationCats = useRef(new Map<string, string[]>()); // quotation id → its categories
+  const inheritCategories = (qtIds: string[]) => {
+    if (categoriesPicked) return;
+    const ids = new Set(qtIds.flatMap((id) => quotationCats.current.get(id) ?? []));
+    setCategoryIds(categories.filter((c) => ids.has(c.id)).map((c) => c.id));
+  };
   const linkedRef = useRef<LinkedQuotation[]>([]); // the same, current at once (see selectQuotation)
   const [showAddSearch,    setShowAddSearch]    = useState(false);
   const [qtSearch,         setQtSearch]         = useState("");
@@ -263,6 +274,8 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
       };
 
       linkedRef.current = [...linkedRef.current, linked]; // at once, for a next link in the same click
+      quotationCats.current.set(qt.id, Array.isArray(qt.categoryIds) ? (qt.categoryIds as string[]) : []);
+      inheritCategories(linkedRef.current.map((q) => q.id));
       setLinkedQuotations((prev) => {
         if (qt.salesPersonName) {
           setSalesPersons((prevSps) => {
@@ -369,6 +382,7 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
     if (removedNo) cpoDisc.removeQuotation(removedNo);
     linkedRef.current = linkedRef.current.filter((q) => q.id !== qtId);
     setLinkedQuotations((prev) => prev.filter((q) => q.id !== qtId));
+    inheritCategories(linkedRef.current.filter((q) => q.id !== qtId).map((q) => q.id));
     setItems((prev) => {
       const next = prev.filter((i) => i._quotationId !== qtId);
       if (!amountOverride) setAmount(cpoDisc.netTotal(next));
@@ -902,6 +916,9 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
         salesPersonName: salesPersons[0]?.name || undefined,
         associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined,
         notes:           notes || undefined,
+        // what the form shows: picked by the user, or its quotations'. Neither: the server's default (the
+        // quotations', else the company's default categories)
+        categoryIds:     categories.length > 0 && (categoriesPicked || categoryIds.length > 0) ? categoryIds : undefined,
         receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
         deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
         deliveryAddress: deliveryAddress.trim() || undefined,
@@ -1615,6 +1632,22 @@ export function CreateCustomerPoClient({ members, currentUserName = "" }: { memb
                 </tfoot>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* ── Categories ── */}
+        {categories.length > 0 && (
+          <div className="space-y-1.5">
+            <Label className="text-xs">Categories</Label>
+            <div className="flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <CategoryChip key={c.id} option={c} selected={categoryIds.includes(c.id)}
+                  onClick={() => { setCategoriesPicked(true); setCategoryIds((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id])); }} />
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {categoriesPicked ? "Your choice is kept." : linkedQuotations.length > 0 ? "From the quotation. Change them if needed." : "Linking a quotation picks its categories."}
+            </p>
           </div>
         )}
 

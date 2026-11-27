@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/auth/require-permission";
 import { getCustomerPoDetailCentralized, updateCustomerPoCentralized, getCustomerPoSoLock } from "@/server/customer-purchase-order";
 import { getOrgMembers } from "@/server/members";
+import { categoriesOfOrgs } from "@/lib/document-category/inherit";
 import { EditCustomerPoClient } from "../../../[id]/edit/edit-customer-po-client";
 
 export default async function CentralizedEditCustomerPoPage({ params }: { params: Promise<{ id: string }> }) {
@@ -14,6 +15,8 @@ export default async function CentralizedEditCustomerPoPage({ params }: { params
     getCustomerPoSoLock(id).catch(() => null),
   ]);
   if (!cpo) notFound();
+  // its company's categories, to pick from
+  const categories = await categoriesOfOrgs([cpo.organizationId]);
   return (
     <EditCustomerPoClient
       cpo={cpo}
@@ -21,6 +24,7 @@ export default async function CentralizedEditCustomerPoPage({ params }: { params
       currentUserName={currentUserName}
       updateFn={updateCustomerPoCentralized}
       soLock={soLock}
+      categories={categories}
       detailHref={`/dashboard/sales/customer-po/centralized/${id}`}
     />
   );

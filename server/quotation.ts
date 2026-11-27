@@ -1079,6 +1079,7 @@ export async function getQuotationForSO(id: string) {
       status: quotation.status,
       isDummy: quotation.isDummy,
       sets: quotation.sets,
+      categoryIds: quotation.categoryIds, // the customer PO made from it starts with them
       grandTotal: quotation.grandTotal,
       subtotal: quotation.subtotal,
       overallDiscountPct: quotation.overallDiscountPct,
