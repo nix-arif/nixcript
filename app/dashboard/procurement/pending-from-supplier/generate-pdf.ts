@@ -16,7 +16,8 @@ export type PendingPdfInput = {
   groups: { supplierName: string; organizationName: string | null; lines: PendingLine[]; oldest: Date }[];
   showOrg: boolean;                 // centralized: name the company on each supplier
   // What the user chose to print (the PDF options dialog)
-  show: { customer: boolean; short: boolean; replacement: boolean };
+  // cost: unit cost and pending value (offered only to a user with purchase-order:view-cost)
+  show: { customer: boolean; short: boolean; replacement: boolean; cost?: boolean };
   // Defect photos, already shrunk to JPEG in the browser, by photo id
   photos?: Map<string, Uint8Array>;
 };
@@ -31,6 +32,8 @@ const fmtQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 // the line's unit of measure for "Short by 2 pc" — "pc" when it has none
 const unitOf = (l: PendingLine) => (l.uom?.trim() || "pc").toLowerCase();
 const fmtDate = (d: Date) => new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" });
+const fmtMoney = (n: number, currency: string | null) =>
+  `${!currency || currency === "MYR" ? "RM" : currency} ${n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const daysSince = (d: Date) => Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000));
 
 function wrap(text: string, font: PDFFont, size: number, maxW: number): string[] {
@@ -115,8 +118,30 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
   const qtyOf = (l: PendingLine, c: PdfCond) => (c === "notShipped" ? l.qtyNotShipped : c === "short" ? l.qtyShort : l.qtyAwaitingReplacement);
   const pendingOf = (l: PendingLine) => input.conds.reduce((s, c) => s + qtyOf(l, c), 0);
   const groups = input.groups;
+  // cost columns: only when chosen in the dialog and the lines carry a cost (the server sends it to permitted users)
+  const withCost = !!input.show.cost && groups.some((g) => g.lines.some((l) => l.unitCost !== null));
+  const valueOf = (l: PendingLine) => (l.unitCost ?? 0) * pendingOf(l);
+  const sumValue = (ls: PendingLine[]) => {
+    const by = new Map<string, number>();
+    for (const l of ls) if (l.unitCost !== null) by.set(l.currency ?? "MYR", (by.get(l.currency ?? "MYR") ?? 0) + valueOf(l));
+    return by.size ? [...by].map(([c, v]) => fmtMoney(v, c)).join(" · ") : fmtMoney(0, "MYR");
+  };
+  // With costs, the unit cost goes under Ordered ("@ RM …") and the value under Pending: two more
+  // columns wouldn't fit beside every condition on the page, so those two widen and the two
+  // widest condition columns give up a little
+  if (withCost) {
+    const ordered = fixed.find((c) => c.key === "ordered")!;
+    const qtyCell = ordered.cell;
+    ordered.label = "Ordered @ cost";
+    ordered.width = 64;
+    ordered.cell = (l) => [...qtyCell(l), l.unitCost !== null ? `@ ${fmtMoney(l.unitCost, l.currency)}` : "-"];
+    condCols.short.width = 158;
+    condCols.replacement.width = 158;
+  }
   const tail: Col[] = [
-    { key: "pending", label: "Pending", width: 50, align: "right", cell: (l) => [fmtQty(pendingOf(l))] },
+    withCost
+      ? { key: "pending", label: "Pending / value", width: 64, align: "right", cell: (l) => [fmtQty(pendingOf(l)), fmtMoney(valueOf(l), l.currency)] }
+      : { key: "pending", label: "Pending", width: 50, align: "right", cell: (l) => [fmtQty(pendingOf(l))] },
     { key: "age", label: "Age", width: 38, align: "right", cell: (l) => [`${daysSince(l.since)}d`] },
   ];
   const cols: Col[] = [...fixed, ...shownConds.map((c) => condCols[c]), ...tail];
@@ -174,6 +199,7 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
   const boxes: [string, string][] = [
     ["Suppliers", `${groups.length}  (${all.length} line${all.length === 1 ? "" : "s"})`],
     ...input.conds.map((c) => [input.condLabel[c], `${fmtQty(tot(c))} units`] as [string, string]),
+    ...(withCost ? [["Pending value (supplier PO cost)", sumValue(all)] as [string, string]] : []),
   ];
   y -= 6;
   const bw = (CW - (boxes.length - 1) * 8) / boxes.length;
@@ -210,7 +236,7 @@ export async function generatePendingFromSupplierPdf(input: PendingPdfInput): Pr
     y -= 6;
     text(page, heading, M, y - 11, bold, 11);
     const poCount = new Set(g.lines.map((l) => l.purchaseOrderId)).size;
-    const meta = `${g.lines.length} line${g.lines.length === 1 ? "" : "s"} · ${poCount} PO${poCount === 1 ? "" : "s"} · ${fmtQty(units)} units · oldest ${daysSince(g.oldest)}d`;
+    const meta = `${g.lines.length} line${g.lines.length === 1 ? "" : "s"} · ${poCount} PO${poCount === 1 ? "" : "s"} · ${fmtQty(units)} units${withCost ? ` · ${sumValue(g.lines)}` : ""} · oldest ${daysSince(g.oldest)}d`;
     text(page, meta, M + CW - font.widthOfTextAtSize(safe(meta), 8.5), y - 11, font, 8.5, MID);
     y -= 17;
     drawTableHeader();

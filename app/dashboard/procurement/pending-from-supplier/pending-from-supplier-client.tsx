@@ -169,11 +169,12 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
   // The page as it's filtered now, as a PDF (built in the browser; loaded on first use)
   const [downloading, setDownloading] = useState(false);
   // What to print — asked in a dialog before each download
-  type PdfShow = { customer: boolean; short: boolean; replacement: boolean };
+  type PdfShow = { customer: boolean; short: boolean; replacement: boolean; cost: boolean };
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
-  const [pdfShow, setPdfShow] = useState<PdfShow>({ customer: true, short: true, replacement: true });
+  const [pdfShow, setPdfShow] = useState<PdfShow>({ customer: true, short: true, replacement: true, cost: false });
   function openPdfDialog() {
-    setPdfShow({ customer: true, short: conds.has("short"), replacement: conds.has("replacement") });
+    // cost prices start off: the PDF is often sent outside the team
+    setPdfShow({ customer: true, short: conds.has("short"), replacement: conds.has("replacement"), cost: false });
     setPdfDialogOpen(true);
   }
   async function downloadPdf(show: PdfShow) {
@@ -538,6 +539,8 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
               ["customer", "Customer name & customer organization name", "Under each item, with its customer PO no."],
               ["short", "Short on packing list", "Which packing lists are short, and by how much"],
               ["replacement", "Awaiting replacement", "Which goods receipts' rejected units are still not replaced, with their defect photos"],
+              // only for someone allowed to see costs (the server sends them only then)
+              ...(showCost ? [["cost", "Cost prices", "Each line's unit cost from its supplier PO, its pending value, and the totals. Leave off if the PDF goes to anyone who shouldn't see what you pay."]] : []),
             ] as [keyof PdfShow, string, string][]).map(([key, label, hint]) => (
               <label key={key} className="flex items-start gap-3 cursor-pointer">
                 <Checkbox
