@@ -72,7 +72,21 @@ const qtyOf = (l: PendingLine, c: Cond) => (c === "notShipped" ? l.qtyNotShipped
 // What a line owes under the ticked conditions (0 = it doesn't show)
 const pendingFor = (l: PendingLine, conds: Set<Cond>) => ALL_CONDS.reduce((s, c) => s + (conds.has(c) ? qtyOf(l, c) : 0), 0);
 
+// Cost (only sent for a user with purchase-order:view-cost): the supplier PO's unit price × what's pending
+const valueOf = (l: PendingLine, conds: Set<Cond>) => (l.unitCost ?? 0) * pendingFor(l, conds);
+const fmtMoney = (n: number, currency: string | null) =>
+  `${!currency || currency === "MYR" ? "RM" : currency} ${n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// a sum per currency, e.g. "RM 12,000.00 · USD 300.00"
+function sumByCurrency(ls: PendingLine[], conds: Set<Cond>): string {
+  const by = new Map<string, number>();
+  for (const l of ls) if (l.unitCost !== null) by.set(l.currency ?? "MYR", (by.get(l.currency ?? "MYR") ?? 0) + valueOf(l, conds));
+  if (by.size === 0) return fmtMoney(0, "MYR");
+  return [...by].map(([c, v]) => fmtMoney(v, c)).join(" · ");
+}
+
 export function PendingFromSupplierClient({ lines, centralized = false }: { lines: PendingLine[]; centralized?: boolean }) {
+  // the server sends cost prices only to someone allowed to see them
+  const showCost = lines.some((l) => l.unitCost !== null);
   const [search, setSearch] = useState("");
   const [conds, setConds] = useState<Set<Cond>>(() => new Set(ALL_CONDS));
   const allConds = conds.size === ALL_CONDS.length;
@@ -229,7 +243,7 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
       />
 
       {/* Totals — each tile also filters */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className={cn("grid grid-cols-2 gap-3", showCost ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
         <button
           type="button"
           onClick={() => setConds(new Set(ALL_CONDS))}
@@ -269,6 +283,13 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
             </button>
           );
         })}
+        {showCost && (
+          <div className="rounded-xl border border-border p-3" title="What is pending, at the supplier PO's unit price (the conditions and filters chosen)">
+            <div className="text-[11px] font-medium text-muted-foreground">Pending value</div>
+            <div className="text-xl font-semibold tabular-nums">{sumByCurrency(filtered, conds)}</div>
+            <div className="text-[11px] text-muted-foreground">at supplier PO cost</div>
+          </div>
+        )}
       </div>
 
       {/* Supplier POs involved in what's shown */}
@@ -375,6 +396,7 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                   )}
                   <span className="ml-auto text-xs text-muted-foreground tabular-nums">
                     {g.lines.length} line{g.lines.length === 1 ? "" : "s"} · {(() => { const n = new Set(g.lines.map((l) => l.purchaseOrderId)).size; return `${n} PO${n === 1 ? "" : "s"}`; })()} · {fmtQty(units)} units
+                    {showCost && <> · <span className="font-medium text-foreground">{sumByCurrency(g.lines, conds)}</span></>}
                   </span>
                   <AgeBadge since={g.oldest} />
                 </button>
@@ -387,10 +409,12 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                           <th className="px-3 py-2 text-left font-medium">PO</th>
                           <th className="px-3 py-2 text-left font-medium min-w-56">Item</th>
                           <th className="px-3 py-2 text-right font-medium">Ordered</th>
+                          {showCost && <th className="px-3 py-2 text-right font-medium">Unit cost</th>}
                           <th className={cn("px-3 py-2 text-right font-medium", dim("notShipped"))}>Not shipped</th>
                           <th className={cn("px-3 py-2 text-left font-medium", dim("short"))}>Short on packing list</th>
                           <th className={cn("px-3 py-2 text-left font-medium", dim("replacement"))}>Awaiting replacement</th>
                           <th className="px-3 py-2 text-right font-medium">Pending</th>
+                          {showCost && <th className="px-3 py-2 text-right font-medium">Pending value</th>}
                           <th className="px-3 py-2 text-right font-medium">Age</th>
                         </tr>
                       </thead>
@@ -418,6 +442,7 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                               )}
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">{fmtQty(l.qtyOrdered)} {l.uom ?? ""}</td>
+                            {showCost && <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{l.unitCost !== null ? fmtMoney(l.unitCost, l.currency) : "—"}</td>}
                             <td className={cn("px-3 py-2 text-right tabular-nums", dim("notShipped"))}>{l.qtyNotShipped > 0 ? fmtQty(l.qtyNotShipped) : "—"}</td>
                             <td className={cn("px-3 py-2", dim("short"))}>
                               {l.shortPls.length === 0 ? "—" : (
@@ -486,6 +511,7 @@ export function PendingFromSupplierClient({ lines, centralized = false }: { line
                               )}
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums font-semibold">{fmtQty(pendingFor(l, conds))}</td>
+                            {showCost && <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtMoney(valueOf(l, conds), l.currency)}</td>}
                             <td className="px-3 py-2 text-right"><AgeBadge since={l.since} /></td>
                           </tr>
                         ))}

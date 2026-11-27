@@ -63,6 +63,8 @@ export const ALL_PERMISSIONS = [
   { key: "purchase-order:delete", label: "Delete Purchase Order" },
   { key: "purchase-order:read:centralized",   label: "View All Supplier POs Across Owner's Organizations" },
   { key: "purchase-order:update:centralized", label: "Edit Supplier POs Across Owner's Organizations" },
+  // the price paid to suppliers, where a page would otherwise show only quantities (Pending from Supplier)
+  { key: "purchase-order:view-cost", label: "View Supplier Cost Prices (Pending from Supplier)" },
 
   // Goods Receipt
   { key: "goods-receipt:create", label: "Record Goods Receipt" },

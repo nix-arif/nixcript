@@ -21,6 +21,8 @@ import { inspectionMediaShareUrl, publicBaseUrl } from "@/lib/inspection-media-s
 import { headers } from "next/headers";
 import { requireAccess } from "@/lib/auth/require-access";
 import { getOwnerOrgIds } from "@/lib/org/owner-orgs";
+import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
+import { hasAccess } from "@/lib/permissions/has-access";
 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
 
@@ -50,6 +52,10 @@ export type PendingLine = {
   qtyShort: number; shortPls: PendingShortPl[];
   qtyAwaitingReplacement: number; returns: PendingReturn[];
   totalPending: number;
+  // The supplier PO line's unit price and currency: only for a user with purchase-order:view-cost
+  // (null otherwise, so the price never reaches the page)
+  unitCost: number | null;
+  currency: string | null;
   // when the oldest pending part started: PO date (not shipped), PL date (short), inspection (returns)
   since: Date;
 };
@@ -61,18 +67,23 @@ async function shareBase(): Promise<string> {
   return publicBaseUrl(new Request(`${h.get("x-forwarded-proto") ?? "http"}://${host}/`, { headers: h }));
 }
 
+// May this user see what we pay suppliers?
+async function canViewCost(userId: string, orgId: string): Promise<boolean> {
+  return hasAccess(await getUserPermissions(userId, orgId), "purchase-order:view-cost");
+}
+
 export async function getPendingFromSupplier(): Promise<PendingLine[]> {
-  const { orgId } = await requireAccess("purchase-order:read");
-  return computePending([orgId], await shareBase());
+  const { orgId, userId } = await requireAccess("purchase-order:read");
+  return computePending([orgId], await shareBase(), await canViewCost(userId, orgId));
 }
 
 // Same, across every company the caller's owner holds.
 export async function getPendingFromSupplierCentralized(): Promise<PendingLine[]> {
-  const { orgId } = await requireAccess("purchase-order:read:centralized");
-  return computePending(await getOwnerOrgIds(orgId), await shareBase());
+  const { orgId, userId } = await requireAccess("purchase-order:read:centralized");
+  return computePending(await getOwnerOrgIds(orgId), await shareBase(), await canViewCost(userId, orgId));
 }
 
-async function computePending(orgIds: string[], baseUrl: string): Promise<PendingLine[]> {
+async function computePending(orgIds: string[], baseUrl: string, withCost: boolean): Promise<PendingLine[]> {
   if (orgIds.length === 0) return [];
 
   // PO lines of POs that went to the supplier (confirmed; a fulfilled PO can still have returns open)
@@ -210,6 +221,8 @@ async function computePending(orgIds: string[], baseUrl: string): Promise<Pendin
       customerPoNo: item.customerPoNo || null, customerName: item.customerName || null, customerOrganization: item.customerOrganization || null,
       qtyOrdered: ordered,
       qtyNotShipped, qtyShort, shortPls, qtyAwaitingReplacement, returns, totalPending,
+      unitCost: withCost ? num(item.unitPrice) : null,
+      currency: withCost ? (item.currency || "MYR") : null,
       since: new Date(Math.min(...sinceDates.map((d) => new Date(d).getTime()))),
     });
   }

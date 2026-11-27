@@ -15,6 +15,7 @@ export const KEY_GROUP: Record<string, string> = {
   "purchase-order:read": "procurement", "purchase-order:create": "procurement",
   "purchase-order:update": "procurement", "purchase-order:delete": "procurement",
   "purchase-order:read:centralized": "procurement", "purchase-order:update:centralized": "procurement",
+  "purchase-order:view-cost": "procurement",
   "goods-receipt:create": "procurement", "goods-receipt:read:centralized": "procurement",
   "packing-list:create": "procurement", "packing-list:inspect": "procurement", "packing-list:amend": "procurement", "packing-list:amend:centralized": "procurement",
   "packing-list:read:centralized": "procurement", "packing-list:inspect:centralized": "procurement",
