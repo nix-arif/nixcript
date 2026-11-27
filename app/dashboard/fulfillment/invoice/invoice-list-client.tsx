@@ -747,6 +747,11 @@ export function InvoiceListClient({
                           ) : (
                             <span className="text-xs text-muted-foreground/50">—</span>
                           )}
+                          {snap?.organizationAddress && (
+                            <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground wrap-break-word">
+                              <Highlight text={snap.organizationAddress} query={searchInput} />
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-3 py-2.5 hidden xl:table-cell">

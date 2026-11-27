@@ -82,8 +82,9 @@ export interface SoaOrganization {
 
 // ── Live customer snapshot helper ──────────────────────────────────────────
 // Fetches the current customer name + primary company from the live tables so
-// that display views always reflect the latest data, even if the stored
-// customerSnapshot JSON is stale from a prior edit.
+// that display views show the customer's latest name, title and contact even if
+// the stored customerSnapshot JSON is stale from a prior edit. The hospital stays
+// the invoice's own (see mergeSnapshot).
 
 type LiveCustomerData = {
   title: string | null;
@@ -136,8 +137,13 @@ function mergeSnapshot(
     name: live.name,
     email: live.email ?? snapshot?.email,
     contactNo: live.contactNo ?? snapshot?.contactNo,
-    organizationName: live.organizationName ?? snapshot?.organizationName,
-    organizationAddress: live.organizationAddress ?? snapshot?.organizationAddress,
+    // the hospital is the one the invoice was made out to: a doctor who has since moved to another
+    // hospital keeps her earlier invoices at the earlier one (and the search goes by this one too).
+    // The current one only fills in an invoice saved without a hospital.
+    organizationName: snapshot?.organizationName || live.organizationName || undefined,
+    organizationAddress: snapshot?.organizationName
+      ? snapshot.organizationAddress
+      : live.organizationAddress ?? snapshot?.organizationAddress,
   };
 }
 
