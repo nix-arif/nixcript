@@ -30,6 +30,7 @@ import {
   organization,
   packingListItem,
   product,
+  purchaseRequisitionItem,
   purchaseOrder,
   purchaseOrderCustomerPo,
   purchaseOrderItem,
@@ -39,6 +40,8 @@ import {
   supplier,
 } from "@/db/schema";
 import { soLineQty } from "@/lib/sales-order/set-qty";
+import { prCoveredQty } from "@/lib/purchase-requisition/coverage";
+import { newDraftRef } from "@/lib/draft-ref";
 import { bookSetPriceAsUnitPrice } from "@/lib/quotation-set-price";
 import { discountFromQuotations, discountFromSaved, overallDiscountAmount } from "@/lib/sales-order/overall-discount";
 import { adjustReservation } from "@/lib/inventory/create-movement";
@@ -88,6 +91,18 @@ export type PoAction = {
   why?: string;
 };
 
+export type PrLine = {
+  productCode: string;
+  description: string | null;
+  qty: number;
+  uom: string | null;
+  unitCost: number;
+  supplierId: string | null;
+  supplierName: string | null;
+  customerName: string | null;
+  customerOrganization: string | null;
+};
+
 export type AmendmentPlan = {
   cpoNo: string;
   cpoRevision: number;
@@ -98,6 +113,8 @@ export type AmendmentPlan = {
   poActions: PoAction[];
   /** What the user has to do by hand */
   followUps: string[];
+  /** Extra quantities no open supplier PO can take: Apply raises a draft PR for them, linked to the SO */
+  prLines: PrLine[];
   /** Orders to your own companies that carry the change on (their customer PO and sales order follow) */
   chain: string[];
   /** Why it can't be applied (empty: it can) */
@@ -112,6 +129,7 @@ type SoOps = {
 
 export type AmendmentWork = {
   plan: AmendmentPlan;
+  cpo: CpoRow;
   so: typeof salesOrder.$inferSelect;
   oldSoItems: SoItemRow[];
   soOps: SoOps;
@@ -379,6 +397,10 @@ export async function planCustomerPoAmendment(
       : packedSet.has(p.id) ? "the supplier has packed it already"
       : undefined;
 
+  // what the SO's PRs already ask for, per product (an increase on a product that's on a PR can't be
+  // requested again the usual way, so the amendment raises it)
+  const prCovered = (await prCoveredQty(orgId, [so.id])).get(so.id) ?? new Map<string, number>();
+  const prLines: PrLine[] = [];
   const poActions: PoAction[] = [];
   for (const [k, delta] of deltaByKey) {
     if (Math.abs(delta) < 1e-9 || !k.startsWith("c:")) continue;
@@ -394,14 +416,30 @@ export async function planCustomerPoAmendment(
       });
     };
     if (delta > 0) {
-      const target = onPo.find((i) => !whyNot(po(i.purchaseOrderId))) ?? onPo[0];
+      const target = onPo.find((i) => !whyNot(po(i.purchaseOrderId)));
+      const isNew = !mine.some((l) => keyOf(l) === k);
       if (target) act(target, num(target.qty) + delta);
-      else if ((mine.some((l) => keyOf(l) === k))) {
-        // ordered from stock or not bought yet: the stock check on approval (or a PR) covers it
-      } else {
+      else if (onPo.length > 0 || (prCovered.get(k.slice(2)) ?? 0) > 0 || isNew) {
+        // no open supplier PO can take it: a draft PR for the extra (with the supplier it was bought from)
         const l = newLines.find((x) => keyOf(x) === k);
-        followUps.push(`${l?.productCode ?? k.slice(2)} is new on the order (${qtyText(delta)}): raise a PR for it if it isn't in stock.`);
+        const from = onPo[0];
+        const fromPo = from ? po(from.purchaseOrderId) : undefined;
+        prLines.push({
+          productCode: l?.productCode ?? k.slice(2),
+          description: l?.description ?? from?.description ?? null,
+          qty: delta,
+          uom: l?.uom ?? from?.uom ?? null,
+          unitCost: from ? num(from.unitPrice) : 0,
+          supplierId: fromPo?.supplierId ?? null,
+          supplierName: (fromPo?.supplierSnapshot as { name?: string } | null)?.name ?? null,
+          customerName: l?.customerName ?? null,
+          customerOrganization: l?.customerOrganization ?? null,
+        });
+        followUps.push(isNew
+          ? `${l?.productCode ?? k.slice(2)} is new on the order: a draft PR for ${qtyText(delta)} is raised (delete its line if it's in stock).`
+          : `${l?.productCode ?? k.slice(2)}: ${qtyText(delta)} more${fromPo ? ` (${fromPo.poNo} can't take it: ${whyNot(fromPo)})` : ""}: a draft PR for it is raised.`);
       }
+      // otherwise it comes from stock: the stock check on approval covers it
     } else {
       let left = -delta;
       for (const it of [...onPo].reverse()) {
@@ -472,12 +510,13 @@ export async function planCustomerPoAmendment(
     lines,
     poActions,
     followUps,
+    prLines,
     chain,
     blockers,
     soChanged: lines.length > 0 || Math.abs(num(so.grandTotal) - grand) >= 0.005,
   };
-  if (!plan.soChanged && poActions.length === 0) blockers.push("Nothing to amend: the lines and amount are the same as the sales order's.");
-  return { plan, so, oldSoItems, soOps: ops, soTotals };
+  if (!plan.soChanged && poActions.length === 0 && prLines.length === 0) blockers.push("Nothing to amend: the lines and amount are the same as the sales order's.");
+  return { plan, cpo, so, oldSoItems, soOps: ops, soTotals };
 }
 
 const lineSummary = (l: AmendLineChange) => {
@@ -513,7 +552,7 @@ export async function applyAmendmentDownstream(
   amendPoIds: string[],
   sourceAmendmentId: string,
   depth = 0,
-): Promise<{ soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[] }> {
+): Promise<{ soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[]; raisedPrNo: string | null }> {
   const { so, plan, soOps, soTotals, oldSoItems } = work;
   const orgId = so.organizationId;
   // an SO that was submitted or approved goes back for approval; one not submitted yet stays as it is
@@ -558,6 +597,35 @@ export async function applyAmendmentDownstream(
   });
   }
 
+  // extra quantities no open supplier PO can take: a draft PR for them, linked to the SO
+  let raisedPrNo: string | null = null;
+  if (plan.prLines.length > 0) {
+    const prId = nanoid();
+    raisedPrNo = newDraftRef();
+    const codes = plan.prLines.map((l) => l.productCode);
+    const prods = await db.select({ id: product.id, code: product.productCode }).from(product)
+      .where(and(eq(product.organizationId, orgId), inArray(product.productCode, codes)));
+    await db.insert(purchaseRequisition).values({
+      id: prId, organizationId: orgId, prNo: raisedPrNo,
+      salesOrderId: so.id, salesOrderNo: so.soNo,
+      customerPoId: work.cpo.id, customerPoNo: work.cpo.customerPoNo,
+      status: "draft", prType: "customer_order",
+      notes: `Raised by the amendment of customer PO ${plan.cpoNo} (Rev ${plan.cpoRevision}): ${reason}`,
+      deliveryDate: so.deliveryDate, deliveryAddress: so.deliveryAddress,
+      requestedBy: userId,
+    });
+    await db.insert(purchaseRequisitionItem).values(plan.prLines.map((l, i) => ({
+      id: nanoid(), purchaseRequisitionId: prId, rowNo: i + 1,
+      productId: prods.find((p) => p.code === l.productCode)?.id ?? null,
+      productCode: l.productCode, description: l.description,
+      qty: qtyText(l.qty), uom: l.uom,
+      estimatedUnitCost: l.unitCost.toFixed(2), currency: "MYR", totalEstimatedCost: (l.qty * l.unitCost).toFixed(2),
+      preferredSupplierId: l.supplierId, preferredSupplierName: l.supplierName,
+      cpoNo: work.cpo.customerPoNo, sourceCustomerPoId: work.cpo.id,
+      customerName: l.customerName, customerOrganization: l.customerOrganization,
+    })));
+  }
+
   // the supplier POs that can still be changed: same number, new revision
   const amendedPos: { poNo: string; revision: number }[] = [];
   const chain: string[] = [];
@@ -600,7 +668,7 @@ export async function applyAmendmentDownstream(
     chain.push(...(await cascadeToSibling(poId, userId, reason, depth)));
   }
 
-  return { soRevision: plan.soChanged ? plan.so.revision : plan.so.revision - 1, amendedPos, chain };
+  return { soRevision: plan.soChanged ? plan.so.revision : plan.so.revision - 1, amendedPos, chain, raisedPrNo };
 }
 
 // Our PO to a sibling company was amended: the customer PO it became there (and its sales order, and

@@ -693,7 +693,7 @@ export async function previewCustomerPoAmendment(input: UpdateCustomerPoInput): 
  */
 export async function amendCustomerPo(
   input: UpdateCustomerPoInput & { reason: string; amendPoIds: string[] },
-): Promise<{ cpoRevision: number; soNo: string; soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[]; followUps: string[] }> {
+): Promise<{ cpoRevision: number; soNo: string; soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[]; followUps: string[]; raisedPrNo: string | null }> {
   const { reason, amendPoIds, ...update } = input;
   if (!reason?.trim()) throw new Error("Give the reason for the amendment (e.g. the customer's amendment letter).");
   const { existing, userId } = await cpoForAmendment(update.id);
@@ -721,7 +721,8 @@ export async function amendCustomerPo(
   revalidatePath(`/dashboard/sales/order/${work.so.id}`);
   revalidatePath("/dashboard/sales/order");
   revalidatePath("/dashboard/procurement/purchase-order");
-  return { cpoRevision: work.plan.soChanged ? work.plan.cpoRevision : work.plan.cpoRevision - 1, soNo: work.so.soNo, soRevision: down.soRevision, amendedPos: down.amendedPos, chain: down.chain, followUps: work.plan.followUps };
+  revalidatePath("/dashboard/procurement/requisition");
+  return { cpoRevision: work.plan.soChanged ? work.plan.cpoRevision : work.plan.cpoRevision - 1, soNo: work.so.soNo, soRevision: down.soRevision, amendedPos: down.amendedPos, chain: down.chain, followUps: work.plan.followUps, raisedPrNo: down.raisedPrNo };
 }
 
 // The CPO number is copied onto the documents made from the CPO (sales order, PR, internal PO, DO,

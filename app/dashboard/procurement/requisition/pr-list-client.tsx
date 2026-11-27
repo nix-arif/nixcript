@@ -1,6 +1,7 @@
 "use client";
 
 import { OrderProgressBadge } from "@/components/so-stock-chip";
+import { DocRevBadge } from "@/components/amendment-history";
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -265,9 +266,13 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
                     </td>
                     <td className="px-4 py-3 hidden sm:table-cell">
                       {pr.salesOrderNo ? (
-                        <span className={`flex items-center gap-1 text-xs ${pr.status === "cancelled" ? "text-muted-foreground" : "text-blue-600 dark:text-blue-400"}`}>
-                          <LinkIcon className="w-3 h-3" />
-                          <Highlight text={pr.salesOrderNo} query={search} />
+                        <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
+                          <span className={`flex items-center gap-1 text-xs ${pr.status === "cancelled" ? "text-muted-foreground" : "text-blue-600 dark:text-blue-400"}`}>
+                            <LinkIcon className="w-3 h-3" />
+                            <Highlight text={pr.salesOrderNo} query={search} />
+                          </span>
+                          {/* the SO's revision: amended after the PR was raised */}
+                          <DocRevBadge docType="so" docId={pr.salesOrderId} />
                         </span>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>

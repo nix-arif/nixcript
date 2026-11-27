@@ -20,6 +20,7 @@ import {
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
 import { soLineQty, soLineQtyText } from "@/lib/sales-order/set-qty";
+import { prCoveredQty, remainingPerLine } from "@/lib/purchase-requisition/coverage";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, notInArray, isNotNull, isNull, ne, ilike, or } from "drizzle-orm";
 import { getNumberingConfig } from "@/server/document-numbering";
@@ -712,23 +713,17 @@ export async function getSoItemsForPr(soId: string) {
     : [];
   const costMap = new Map(products.map((p) => [p.id, p.costUnitPrice]));
 
-  // Find product codes already covered by active (non-cancelled) PRs for this SO
-  const activePrItems = await db
-    .select({ productCode: purchaseRequisitionItem.productCode })
-    .from(purchaseRequisitionItem)
-    .innerJoin(purchaseRequisition, eq(purchaseRequisitionItem.purchaseRequisitionId, purchaseRequisition.id))
-    .where(and(
-      eq(purchaseRequisition.salesOrderId, soId),
-      eq(purchaseRequisition.organizationId, orgId),
-      ne(purchaseRequisition.status, "cancelled"),
-    ));
-  const coveredCodes = new Set(activePrItems.map((i) => i.productCode).filter(Boolean) as string[]);
-
-  const filteredItems = items.filter((i) =>
-    !i.prExcluded &&
-    (i.description || i.productCode) &&
-    (!i.productCode || !coveredCodes.has(i.productCode))
-  );
+  // What the SO's active PRs already ask for (quantity × sets, per product): only the rest is offered,
+  // so a quantity raised by an amendment can still be requested
+  const live = items.filter((i) => !i.prExcluded && (i.description || i.productCode));
+  const remaining = remainingPerLine(live, (await prCoveredQty(orgId, [soId])).get(soId));
+  const filteredItems = live
+    .filter((i) => (remaining.get(i.id) ?? 0) > 1e-9)
+    // a line partly covered: the part still to request (in a set it's already the total, as 1 lot)
+    .map((i) => {
+      const left = remaining.get(i.id)!;
+      return Math.abs(left - soLineQty(i)) > 1e-9 ? { ...i, qty: String(Number(left.toFixed(4))), setQty: i.setGroupId ? "1" : i.setQty } : i;
+    });
 
   return {
     soNo: so.soNo,
@@ -853,49 +848,21 @@ export async function getPendingSosForPr(): Promise<PendingSoForPrRow[]> {
 
   const soIds = rows.map((r) => r.id);
 
-  // For each SO, find which product codes are already covered by active (non-cancelled) PRs
-  const activePrItems = await db
-    .select({
-      salesOrderId: purchaseRequisition.salesOrderId,
-      productCode: purchaseRequisitionItem.productCode,
-    })
-    .from(purchaseRequisitionItem)
-    .innerJoin(purchaseRequisition, eq(purchaseRequisitionItem.purchaseRequisitionId, purchaseRequisition.id))
-    .where(and(
-      eq(purchaseRequisition.organizationId, orgId),
-      isNotNull(purchaseRequisition.salesOrderId),
-      inArray(purchaseRequisition.salesOrderId, soIds),
-      ne(purchaseRequisition.status, "cancelled"),
-    ));
-
-  const coveredCodesPerSo = new Map<string, Set<string>>();
-  for (const item of activePrItems) {
-    if (!item.salesOrderId || !item.productCode) continue;
-    if (!coveredCodesPerSo.has(item.salesOrderId)) coveredCodesPerSo.set(item.salesOrderId, new Set());
-    coveredCodesPerSo.get(item.salesOrderId)!.add(item.productCode);
-  }
-
+  // Keep only SOs that still have something to request: a line its active PRs don't fully ask for
+  // (quantity × sets, per product — an amendment can raise a quantity already on a PR)
+  const covered = await prCoveredQty(orgId, soIds);
   const soItemRows = await db
-    .select({ salesOrderId: salesOrderItem.salesOrderId, productCode: salesOrderItem.productCode })
+    .select({ id: salesOrderItem.id, salesOrderId: salesOrderItem.salesOrderId, productCode: salesOrderItem.productCode, qty: salesOrderItem.qty, setGroupId: salesOrderItem.setGroupId, setQty: salesOrderItem.setQty })
     .from(salesOrderItem)
     .where(and(
       inArray(salesOrderItem.salesOrderId, soIds),
       ne(salesOrderItem.prExcluded, true),
     ));
-
-  const soItemCodesPerSo = new Map<string, Set<string>>();
-  for (const item of soItemRows) {
-    if (!item.productCode) continue;
-    if (!soItemCodesPerSo.has(item.salesOrderId)) soItemCodesPerSo.set(item.salesOrderId, new Set());
-    soItemCodesPerSo.get(item.salesOrderId)!.add(item.productCode);
-  }
-
-  // Keep only SOs that still have at least one uncovered item
   const pendingRows = rows.filter((r) => {
-    const soItemCodes = soItemCodesPerSo.get(r.id);
-    if (!soItemCodes || soItemCodes.size === 0) return true;
-    const covered = coveredCodesPerSo.get(r.id) ?? new Set<string>();
-    return [...soItemCodes].some((code) => !covered.has(code));
+    const lines = soItemRows.filter((i) => i.salesOrderId === r.id && i.productCode);
+    if (lines.length === 0) return true;
+    const left = remainingPerLine(lines, covered.get(r.id));
+    return lines.some((l) => (left.get(l.id) ?? 0) > 1e-9);
   });
 
   if (pendingRows.length === 0) return [];

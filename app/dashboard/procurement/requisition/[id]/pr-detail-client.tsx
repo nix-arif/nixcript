@@ -1,6 +1,7 @@
 "use client";
 
 import { OrderProgressBadge } from "@/components/so-stock-chip";
+import { DocRevBadge, AmendedAfterNote } from "@/components/amendment-history";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -502,6 +503,8 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
         }
       />
 
+      <AmendedAfterNote soId={pr.salesOrderId} soNo={pr.salesOrderNo} since={pr.createdAt} />
+
       {/* Header info */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 rounded-xl border border-border bg-background p-5">
         <div>
@@ -533,6 +536,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
             >
               <LinkIcon className="w-3 h-3" /> {pr.salesOrderNo}
             </button>
+            <DocRevBadge docType="so" docId={pr.salesOrderId} />
           </div>
         )}
       </div>

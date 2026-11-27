@@ -65,6 +65,7 @@ export function AmendPanel({
       toast.success(plan?.soChanged === false
         ? `Re-priced: ${poText || "no supplier PO changed"}.`
         : `Amended: customer PO Rev ${r.cpoRevision}, ${r.soNo} Rev ${r.soRevision} (back for approval)${poText ? `, ${poText}` : ""}.`, { duration: 10000 });
+      if (r.raisedPrNo) toast.info(`Draft PR ${r.raisedPrNo} raised for the extra quantities: review and submit it.`, { duration: 15000 });
       if (r.chain.length > 0) toast.info(`Also updated: ${r.chain.join(" · ")}`, { duration: 15000 });
       if (r.followUps.length > 0) toast.warning(`Still to do: ${r.followUps.join(" ")}`, { duration: 20000 });
       onDone();
@@ -166,6 +167,17 @@ export function AmendPanel({
                 );
               })}
               <p className="text-muted-foreground">Send the amended PO to the supplier after applying (its PDF says Amendment Rev N).</p>
+            </div>
+          )}
+
+          {plan.prLines.length > 0 && (
+            <div className="rounded-md border border-border bg-background px-3 py-2">
+              <p className="font-semibold">New draft PR (for what no open supplier PO can take)</p>
+              <ul className="list-disc pl-4 text-muted-foreground">
+                {plan.prLines.map((l) => (
+                  <li key={l.productCode}><span className="font-mono">{l.productCode}</span>: {qty(l.qty)} {l.uom ?? ""}{l.supplierName ? ` · ${l.supplierName}` : ""}</li>
+                ))}
+              </ul>
             </div>
           )}
 

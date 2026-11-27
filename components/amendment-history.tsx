@@ -130,3 +130,36 @@ export async function amendmentEvents(docType: DocType, docId: string, label?: s
     detail: [r.reason, r.createdByName && `by ${r.createdByName}`, ...r.summary.slice(0, 3)].filter(Boolean).join(" · "),
   }));
 }
+
+/**
+ * On a PR: its sales order was amended after the PR was raised. The PR stays as first requested;
+ * the supplier PO (or a draft PR the amendment raised) has the current quantities.
+ */
+export function AmendedAfterNote({ soId, soNo, since }: { soId: string | null | undefined; soNo: string | null | undefined; since: Date | string }) {
+  const [rows, setRows] = useState<AmendmentRecord[]>([]);
+  useEffect(() => {
+    if (!soId) return;
+    let live = true;
+    const from = new Date(since).getTime();
+    getDocumentAmendments("so", soId)
+      .then((r) => { if (live) setRows(r.filter((x) => new Date(x.createdAt).getTime() > from)); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [soId, since]);
+  if (rows.length === 0) return null;
+  const latest = rows[0];
+  return (
+    <div role="note" className="flex gap-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+      <FilePenLineIcon className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="space-y-0.5">
+        <p>
+          <span className="font-semibold">The order was amended after this PR</span>: sales order <span className="font-mono">{soNo}</span> is now Rev {latest.revision}
+          {latest.reason ? ` (${latest.reason})` : ""}.
+        </p>
+        <p className="text-xs">
+          This PR shows what was first requested. The supplier PO has the current quantities, and any extra the amendment needed is on a new draft PR.
+        </p>
+      </div>
+    </div>
+  );
+}
