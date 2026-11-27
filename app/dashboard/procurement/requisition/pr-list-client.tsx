@@ -11,7 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/page-header";
 import { Highlight } from "@/components/highlight";
-import { PlusIcon, SearchIcon, TrashIcon, FileTextIcon, LinkIcon, AlertCircleIcon, ClockIcon, CheckCircleIcon, ShoppingCartIcon, ArrowRightIcon, BuildingIcon, CalendarIcon, RefreshCwIcon, FlaskConicalIcon } from "lucide-react";
+import { CategoryFilter, CategoryTags, RecordCount, PR_STATS, StatCards, useListFilters } from "@/components/list-stat-filters";
+import type { CategoryOption } from "@/server/document-category-chain";
+import { PlusIcon, SearchIcon, TrashIcon, FileTextIcon, LinkIcon, ShoppingCartIcon, ArrowRightIcon, BuildingIcon, CalendarIcon, RefreshCwIcon, FlaskConicalIcon } from "lucide-react";
 
 const fmt = (d: Date | string | null | undefined) =>
   d ? new Date(d).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -37,29 +39,26 @@ interface Props {
   requisitions: PrListRow[];
   pendingSos: PendingSoForPrRow[];
   permissions: string[];
+  /** This company's categories, for the filter chips */
+  categories?: CategoryOption[];
 }
 
-export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
+export function PrListClient({ requisitions, pendingSos, permissions, categories = [] }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const canCreate  = hasAccess(permissions, "purchase-requisition:create");
   const canDelete  = hasAccess(permissions, "purchase-requisition:delete");
-  const canApprove = hasAccess(permissions, "purchase-requisition:approve");
-
-  const counts = {
-    draft:     requisitions.filter((r) => r.status === "draft").length,
-    submitted: requisitions.filter((r) => r.status === "submitted").length,
-    approved:  requisitions.filter((r) => r.status === "approved").length,
-  };
-
-  const filtered = search.trim()
-    ? requisitions.filter((r) =>
-        r.prNo.toLowerCase().includes(search.toLowerCase()) ||
-        (r.salesOrderNo ?? "").toLowerCase().includes(search.toLowerCase()),
-      )
-    : requisitions;
+  const f = useListFilters(requisitions, categories, PR_STATS);
+  const q = search.trim().toLowerCase();
+  const filtered = f.inScope.filter((r) =>
+    f.inBucketNow(r) && (!q ||
+      r.prNo.toLowerCase().includes(q) ||
+      (r.salesOrderNo ?? "").toLowerCase().includes(q) ||
+      (r.customerPoNo ?? "").toLowerCase().includes(q) ||
+      f.searchCats(r, q)),
+  );
 
   async function handleDelete(id: string, prNo: string) {
     if (!confirm(`Delete requisition ${prNo}? This cannot be undone.`)) return;
@@ -92,59 +91,18 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
         }
       />
 
-      {/* Pending summary — only shown when there's something to act on */}
-      {(counts.draft > 0 || counts.submitted > 0 || counts.approved > 0) && (
-        <div className="flex flex-wrap gap-2.5">
-          {counts.draft > 0 && (
-            <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/15 flex-1 min-w-48">
-              <ClockIcon className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
-                  {counts.draft} draft {counts.draft === 1 ? "requisition" : "requisitions"}
-                </p>
-                <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                  Not yet submitted — open and submit to send for approval.
-                </p>
-              </div>
-            </div>
-          )}
-          {counts.submitted > 0 && (
-            <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/15 flex-1 min-w-48">
-              <AlertCircleIcon className="w-4 h-4 text-purple-600 dark:text-purple-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-purple-800 dark:text-purple-200">
-                  {counts.submitted} awaiting approval
-                </p>
-                <p className="text-[11px] text-purple-700 dark:text-purple-400 mt-0.5">
-                  {canApprove
-                    ? "Pending your review — approve or reject to proceed."
-                    : "Submitted and waiting for a manager to approve."}
-                </p>
-              </div>
-            </div>
-          )}
-          {counts.approved > 0 && (
-            <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/15 flex-1 min-w-48">
-              <CheckCircleIcon className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-blue-800 dark:text-blue-200">
-                  {counts.approved} approved — ready to order
-                </p>
-                <p className="text-[11px] text-blue-700 dark:text-blue-400 mt-0.5">
-                  Convert these to Supplier POs to place with suppliers.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Stat cards: each one filters the list (click again to show everything) */}
+      <div>
+        <StatCards f={f} />
+        <CategoryFilter f={f} />
+      </div>
 
       <div className="relative">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by PR number or SO number…"
+          placeholder="Search by PR, SO or customer PO number, category…"
           className="pl-9 h-9 text-sm max-w-sm"
         />
       </div>
@@ -213,13 +171,15 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
         </div>
       )}
 
+      <div className="-mb-2"><RecordCount f={f} count={filtered.length} noun="requisition" /></div>
+
       {filtered.length === 0 ? (
         <div className="rounded-xl border border-border bg-background p-10 text-center">
           <FileTextIcon className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">
-            {search ? "No requisitions match your search" : "No purchase requisitions yet"}
+            {search || f.anyActive ? "No requisitions match" : "No purchase requisitions yet"}
           </p>
-          {!search && canCreate && (
+          {!search && !f.anyActive && canCreate && (
             <Button size="sm" className="mt-3 gap-1.5" onClick={() => router.push("/dashboard/procurement/requisition/create")}>
               <PlusIcon className="w-3.5 h-3.5" /> Create first requisition
             </Button>
@@ -254,6 +214,7 @@ export function PrListClient({ requisitions, pendingSos, permissions }: Props) {
                         <Highlight text={pr.prNo} query={search} />
                       </div>
                       <OrderProgressBadge soId={pr.salesOrderId} />
+                      <div className="mt-0.5 flex flex-wrap gap-1"><CategoryTags list={f.categoriesOf(pr)} query={search} /></div>
                       {pr.prType && PR_TYPE_CFG[pr.prType] && (() => {
                         const cfg = PR_TYPE_CFG[pr.prType!];
                         const Icon = cfg.icon;

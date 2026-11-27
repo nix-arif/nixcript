@@ -21,6 +21,8 @@ import {
   ArrowUpDownIcon, CheckIcon, TagIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CategoryFilter, CategoryTags, RecordCount, PO_STATS, StatCards, useListFilters } from "@/components/list-stat-filters";
+import type { CategoryOption } from "@/server/document-category-chain";
 
 type SortKey = "date" | "poNo" | "supplier" | "amount";
 type SortDir = "asc" | "desc";
@@ -109,9 +111,11 @@ interface Props {
   pendingPrs: PendingPrRow[];
   permissions: string[];
   currentUserId: string;
+  /** This company's categories, for the filter chips */
+  categories?: CategoryOption[];
 }
 
-export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions, currentUserId }: Props) {
+export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions, currentUserId, categories = [] }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortOption>(SORT_OPTIONS.find((o) => o.key === "poNo" && o.dir === "desc")!);
@@ -124,8 +128,11 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
   // Only show real supplier POs (confirmed/fulfilled/cancelled)
   const poOnly = initialOrders.filter((o) => PO_STATUSES.has(o.status));
 
+  const f = useListFilters(poOnly, categories, PO_STATS);
+
   const revs = useRevisions("po", initialOrders.map((x) => x.id)); // amended: Rev N by the number
-  const filtered = sortOrders(poOnly.filter((o) => {
+  const filtered = sortOrders(f.inScope.filter((o) => {
+    if (!f.inBucketNow(o)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = o.supplierSnapshot as any;
@@ -139,7 +146,8 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
       o.packingLists.some((pl) => pl.packingListNo.toLowerCase().includes(s) || (pl.supplierRefNo ?? "").toLowerCase().includes(s)) ||
       o.itemCustomers.some((c) =>
         c.name.toLowerCase().includes(s) || c.organization?.toLowerCase().includes(s),
-      )
+      ) ||
+      f.searchCats(o, s)
     );
   }), sort);
 
@@ -157,13 +165,17 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
         }
       />
 
+      {/* Stat cards: each one filters the list (click again to show everything) */}
+      <StatCards f={f} />
+      <CategoryFilter f={f} />
+
       <div className="flex items-center gap-2 mb-4">
         <div className="relative flex-1">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by PO no., supplier, customer, status..."
+            placeholder="Search by PO no., supplier, customer, status, category..."
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -288,9 +300,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
         </>
       ) : (
         <>
-          <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-            {filtered.length} record{filtered.length !== 1 ? "s" : ""}
-          </div>
+          <RecordCount f={f} count={filtered.length} />
           <PoLegend />
           <div className="space-y-2">
             {filtered.map((o) => {
@@ -369,6 +379,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                             <Highlight text={snap.name} query={search} />
                           </span>
                         )}
+                        <CategoryTags list={f.categoriesOf(o)} query={search} />
                         <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
                           {fmt(o.grandTotal, o.currency ?? "MYR")}
                         </span>

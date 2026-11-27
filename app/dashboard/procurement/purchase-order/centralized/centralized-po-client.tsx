@@ -21,6 +21,8 @@ import {
   ArrowUpDownIcon, CheckIcon, TagIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CategoryFilter, CategoryTags, RecordCount, PO_STATS_CENTRAL, StatCards, useListFilters } from "@/components/list-stat-filters";
+import type { CategoryOption } from "@/server/document-category-chain";
 
 type SortKey = "date" | "poNo" | "supplier" | "amount";
 type SortDir = "asc" | "desc";
@@ -87,9 +89,11 @@ interface Props {
   initialPos: CentralizedPurchaseOrder[];
   initialSort?: string | null;
   sortCookie?: string;
+  /** Every company's categories (the filter chips go by name) */
+  categories?: CategoryOption[];
 }
 
-export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null, sortCookie }: Props) {
+export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null, sortCookie, categories = [] }: Props) {
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
   // Server data re-sent (live refresh / router.refresh): show it
@@ -106,9 +110,13 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
 
   const orgs = [...new Set(pos.map((p) => p.organizationName))].sort();
 
+  // the stat cards count the company chosen (and the categories chosen)
+  const inOrg = orgFilter ? pos.filter((p) => p.organizationName === orgFilter) : pos;
+  const f = useListFilters(inOrg, categories, PO_STATS_CENTRAL, true);
+
   const revs = useRevisions("po", pos.map((x) => x.id)); // amended: Rev N by the number
-  const filtered = sortOrders(pos.filter((p) => {
-    if (orgFilter && p.organizationName !== orgFilter) return false;
+  const filtered = sortOrders(f.inScope.filter((p) => {
+    if (!f.inBucketNow(p)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = p.supplierSnapshot as { name?: string } | null;
@@ -122,7 +130,8 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
       p.setGroupLabels.some((set) => set.toLowerCase().includes(s)) ||
       p.itemCustomers.some((c) =>
         c.name.toLowerCase().includes(s) || c.organization?.toLowerCase().includes(s),
-      )
+      ) ||
+      f.searchCats(p, s)
     );
   }), sort);
 
@@ -150,13 +159,16 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
         }
       />
 
+      <StatCards f={f} />
+      <CategoryFilter f={f} />
+
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by PO no., PR no., supplier, organization, customer, set name…"
+            placeholder="Search by PO no., PR no., supplier, organization, customer, set name, category…"
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -209,9 +221,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
         )}
       </div>
 
-      <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} record{filtered.length !== 1 ? "s" : ""}
-      </div>
+      <RecordCount f={f} count={filtered.length} />
 
       {filtered.length > 0 && <PoLegend centralized />}
 
@@ -312,6 +322,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                           {p.createdByName}
                         </span>
                       )}
+                      <CategoryTags list={f.categoriesOf(p)} query={search} />
                       {p.canEdit && (
                         <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
                           {fmt(p.grandTotal, p.currency ?? "MYR")}
