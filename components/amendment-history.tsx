@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { FilePenLineIcon } from "lucide-react";
-import { getDocumentAmendments } from "@/server/amendment";
+import { getDocumentAmendments, getDocumentRevisions } from "@/server/amendment";
 import type { AmendmentRecord, DocType } from "@/lib/amendment/customer-po";
 
 export function AmendmentHistory({
@@ -56,5 +56,28 @@ export function AmendmentHistory({
         ))}
       </ol>
     </section>
+  );
+}
+
+/** The current revision of each document in a list (loaded once per set of ids): { id: revision }. */
+export function useRevisions(docType: DocType, ids: string[]): Record<string, number> {
+  const [revs, setRevs] = useState<Record<string, number>>({});
+  const key = ids.join(",");
+  useEffect(() => {
+    let live = true;
+    if (key) getDocumentRevisions(docType, key.split(",")).then((r) => { if (live) setRevs(r); }).catch(() => {});
+    return () => { live = false; };
+  }, [docType, key]);
+  return revs;
+}
+
+/** "Rev 1" next to a document number in a list, when it was amended. */
+export function RevBadge({ revision }: { revision?: number }) {
+  if (!revision) return null;
+  return (
+    <span title={`Amended: revision ${revision}`}
+      className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+      Rev {revision}
+    </span>
   );
 }

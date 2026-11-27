@@ -1,5 +1,6 @@
 "use client";
 
+import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { SoTrailHover } from "./so-trail-hover";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { useEffect, useState } from "react";
@@ -97,6 +98,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
     setOrgSwitching(false);
   }, [initialOrders]);
 
+  const revs = useRevisions("so", initialOrders.map((x) => x.id)); // amended: Rev N by the number
   const filtered = initialOrders.filter((o) => {
     if (!search) return true;
     const s = search.toLowerCase();
@@ -312,6 +314,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                       <span className="font-mono text-sm font-semibold tracking-tight">
                         <Highlight text={o.soNo} query={search} />
                       </span>
+                      <RevBadge revision={revs[o.id]} />
                       <StatusBadge status={o.status} />
                       <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} />
                       {o.soType === "proforma" && (

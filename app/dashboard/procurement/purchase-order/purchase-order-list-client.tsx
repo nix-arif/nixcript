@@ -1,5 +1,6 @@
 "use client";
 
+import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { PoLegend } from "./_shared/po-legend";
 import { PoTrailHover } from "./po-trail-hover";
 import { PackingListBadges } from "./_shared/packing-list-badges";
@@ -122,6 +123,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
   // Only show real supplier POs (confirmed/fulfilled/cancelled)
   const poOnly = initialOrders.filter((o) => PO_STATUSES.has(o.status));
 
+  const revs = useRevisions("po", initialOrders.map((x) => x.id)); // amended: Rev N by the number
   const filtered = sortOrders(poOnly.filter((o) => {
     if (!search) return true;
     const s = search.toLowerCase();
@@ -308,6 +310,7 @@ export function PurchaseOrderListClient({ initialOrders, pendingPrs, permissions
                         <span className="font-mono text-sm font-medium">
                           <Highlight text={o.poNo ?? o.id} query={search} />
                         </span>
+                        <RevBadge revision={revs[o.id]} />
                         <StatusBadge status={o.status} />
                         {o.prNo && (
                           <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/40 rounded px-1.5 py-0.5 font-mono">

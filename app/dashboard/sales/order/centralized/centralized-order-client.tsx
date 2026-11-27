@@ -1,5 +1,6 @@
 "use client";
 
+import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { SoTrailHover } from "../so-trail-hover";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { useState } from "react";
@@ -58,6 +59,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
 
   const orgs = [...new Set(orders.map((o) => o.organizationName))].sort();
 
+  const revs = useRevisions("so", orders.map((x) => x.id)); // amended: Rev N by the number
   const filtered = orders.filter((o) => {
     if (orgFilter && o.organizationName !== orgFilter) return false;
     if (!search) return true;
@@ -191,6 +193,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
                       <span className="font-mono text-sm font-medium">
                         <Highlight text={o.soNo} query={search} />
                       </span>
+                      <RevBadge revision={revs[o.id]} />
                       <StatusBadge status={o.status} />
                       <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">

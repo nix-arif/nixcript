@@ -1,5 +1,6 @@
 "use client";
 
+import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { PoLegend } from "../_shared/po-legend";
 import { PoTrailHover } from "../po-trail-hover";
 import { PackingListBadges } from "../_shared/packing-list-badges";
@@ -104,6 +105,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
 
   const orgs = [...new Set(pos.map((p) => p.organizationName))].sort();
 
+  const revs = useRevisions("po", pos.map((x) => x.id)); // amended: Rev N by the number
   const filtered = sortOrders(pos.filter((p) => {
     if (orgFilter && p.organizationName !== orgFilter) return false;
     if (!search) return true;
@@ -240,6 +242,7 @@ export function CentralizedPurchaseOrderClient({ initialPos, initialSort = null,
                       <span className="font-mono text-sm font-medium">
                         <Highlight text={p.poNo ?? p.id} query={search} />
                       </span>
+                      <RevBadge revision={revs[p.id]} />
                       <StatusBadge status={p.status} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={p.organizationName} query={search} />

@@ -1,5 +1,6 @@
 "use client";
 
+import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -56,6 +57,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 
+  const revs = useRevisions("cpo", pos.map((x) => x.id)); // amended: Rev N by the number
   const filtered = pos.filter((p) => {
     if (!search) return true;
     const s = search.toLowerCase();
@@ -149,6 +151,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false }: { initialP
                       <span className="font-mono text-sm font-medium">
                         <Highlight text={p.customerPoNo} query={search} />
                       </span>
+                      <RevBadge revision={revs[p.id]} />
                       <StatusBadge status={p.status} />
                       {p.isIntercompany && (
                         <span

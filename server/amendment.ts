@@ -3,7 +3,7 @@
 // The amendment history of a customer PO, sales order or supplier PO (Rev 1, Rev 2…), for its page.
 // Written by lib/amendment/customer-po.ts.
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { documentAmendment, user } from "@/db/schema";
 import { getSession } from "@/lib/auth/require-access";
@@ -30,5 +30,22 @@ export async function getDocumentAmendments(docType: DocType, docId: string): Pr
     return rows.map((r) => ({ id: r.id, revision: r.revision, reason: r.reason, summary: r.changes?.summary ?? [], createdAt: r.createdAt, createdByName: r.createdByName }));
   } catch {
     return []; // a database without the amendments table yet
+  }
+}
+
+/** Each document's current revision (only those amended), for a list: { docId: revision }. */
+export async function getDocumentRevisions(docType: DocType, docIds: string[]): Promise<Record<string, number>> {
+  if (docIds.length === 0) return {};
+  const { orgId } = await getSession();
+  const orgIds = await getOwnerOrgIds(orgId);
+  try {
+    const rows = await db
+      .select({ docId: documentAmendment.docId, revision: sql<number>`max(${documentAmendment.revision})::int` })
+      .from(documentAmendment)
+      .where(and(eq(documentAmendment.docType, docType), inArray(documentAmendment.docId, docIds), inArray(documentAmendment.organizationId, orgIds)))
+      .groupBy(documentAmendment.docId);
+    return Object.fromEntries(rows.map((r) => [r.docId, r.revision]));
+  } catch {
+    return {};
   }
 }
