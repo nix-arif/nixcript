@@ -182,6 +182,13 @@ function Pagination({ page, totalPages, onPage }: { page: number; totalPages: nu
 
 // ── Main component ─────────────────────────────────────────────────────────
 
+// Every sales person of an invoice, the main one first: its sales persons list, else the one name
+function salesPersonsOf(inv: { salesPersonName?: string | null; associateSalesPersons?: unknown }): string[] {
+  const list = Array.isArray(inv.associateSalesPersons) ? (inv.associateSalesPersons as { name?: string }[]).map((p) => p?.name ?? "").filter(Boolean) : [];
+  const names = inv.salesPersonName ? [inv.salesPersonName, ...list] : list;
+  return [...new Set(names)];
+}
+
 // Fields the search looks in (server/invoice.ts getInvoices) that the row doesn't show
 function hiddenMatches(inv: { mrnNo?: string | null; caseType?: string | null }, search: string): { label: string; text: string }[] {
   const q = search.trim().toLowerCase();
@@ -715,18 +722,20 @@ export function InvoiceListClient({
                           ) : (
                             <span className="text-xs text-muted-foreground/50 italic">—</span>
                           )}
-                          {(inv.salesPersonName || inv.applicationSpecialistName) && (
+                          {(salesPersonsOf(inv).length > 0 || inv.applicationSpecialistName) && (
                             <div className="flex flex-wrap gap-1 mt-0.5">
-                              {inv.salesPersonName && (
+                              {/* every sales person (the first is the main one), then the application specialist */}
+                              {salesPersonsOf(inv).map((name, i) => (
                                 <span
+                                  key={`${name}-${i}`}
                                   className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-muted/50 text-muted-foreground border border-border/60"
-                                  title="Sales person"
+                                  title={i === 0 ? "Sales person" : "Sales person (also on this case)"}
                                 >
                                   <UserIcon className="w-2.5 h-2.5 shrink-0" />
-                                  <Highlight text={inv.salesPersonName} query={searchInput} />
+                                  <Highlight text={name} query={searchInput} />
                                 </span>
-                              )}
-                              {inv.applicationSpecialistName && inv.applicationSpecialistName !== inv.salesPersonName && (
+                              ))}
+                              {inv.applicationSpecialistName && !salesPersonsOf(inv).includes(inv.applicationSpecialistName) && (
                                 <span
                                   className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
                                   title="Application specialist"

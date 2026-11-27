@@ -41,3 +41,24 @@ export function staffListMatcher(staff: Staff[]) {
     return [...new Map((people as Staff[]).map((p) => [p.id, p])).values()];
   };
 }
+
+/**
+ * Zilarahim and syahidahsubari work cases as a pair. From the day syahidahsubari joined (her hire date
+ * on her Smart Innosys membership, 18 Jun 2024), a case of theirs has syahidahsubari as the sales
+ * person and Zilarahim as the application specialist; before it, Zilarahim alone. Other sales persons
+ * on the case stay in the list.
+ */
+export const PAIR = { sales: "syahidahsubari", specialist: "Zilarahim" } as const;
+
+export type CaseStaff = { sales: Staff[]; specialist: Staff | null };
+
+/** The pair rule applied to a case's people; anything not involving the pair is returned unchanged. */
+export function applyPairRule(c: CaseStaff, caseDay: string | null, pairFrom: string | null, staff: Staff[]): CaseStaff {
+  const byName = (n: string) => staff.find((s) => s.name.toLowerCase() === n.toLowerCase()) ?? null;
+  const sy = byName(PAIR.sales), zi = byName(PAIR.specialist);
+  if (!sy || !zi || !pairFrom || !caseDay || caseDay < pairFrom) return c;
+  const ids = new Set([...c.sales.map((p) => p.id), c.specialist?.id]);
+  if (!ids.has(sy.id) && !ids.has(zi.id)) return c;
+  const others = c.sales.filter((p) => p.id !== sy.id && p.id !== zi.id);
+  return { sales: [sy, ...others], specialist: zi };
+}

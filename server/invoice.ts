@@ -306,6 +306,8 @@ export async function getInvoices(opts: {
       sql`${invoice.customerPoNo} ILIKE ${q}`,
       sql`${invoice.salesOrderNo} ILIKE ${q}`,
       sql`${invoice.salesPersonName} ILIKE ${q}`,
+      // the other sales persons on the case (their names, not the list's keys)
+      sql`exists (select 1 from json_array_elements(coalesce(${invoice.associateSalesPersons}, '[]'::json)) p where p->>'name' ILIKE ${q})`,
       sql`${invoice.applicationSpecialistName} ILIKE ${q}`,
       sql`${invoice.caseType} ILIKE ${q}`,
       sql`${invoice.mrnNo} ILIKE ${q}`,

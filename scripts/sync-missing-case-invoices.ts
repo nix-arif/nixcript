@@ -20,7 +20,7 @@ import {
   normalizeSurgeon, normalizeHospital, str, toMoney, toDate, mapStatus,
 } from "./seed-config";
 import { sheetRows } from "./case-sheet";
-import { staffListMatcher, type Staff } from "./staff-match";
+import { applyPairRule, PAIR, staffListMatcher, type Staff } from "./staff-match";
 
 const apply = process.argv.includes("--apply");
 // Dates go to the database as ISO strings: a Date is sent as its local wall-clock time, which put
@@ -70,11 +70,14 @@ async function main() {
 
   // the sales person(s) as the staff account(s) the name stands for ("Zila" → Zilarahim, "Hadif ( Ziyad )" →
   // both), else the sheet's text. Staff of any of the owner's companies, former members too (as link-sales-staff.ts).
-  const staffOf = staffListMatcher((await sql`
+  const allStaff = (await sql`
     with orgs as (select organization_id from member where role = 'owner' and deleted_at is null
                   and user_id = (select user_id from member where organization_id = ${ORG.innosys} and role = 'owner' and deleted_at is null limit 1))
     select distinct u.id, u.name from member m join "user" u on u.id = m.user_id
-    where m.organization_id in (select organization_id from orgs) or m.organization_id = any(${orgIds})`) as Staff[]);
+    where m.organization_id in (select organization_id from orgs) or m.organization_id = any(${orgIds})`) as Staff[];
+  const staffOf = staffListMatcher(allStaff);
+  // Zilarahim / syahidahsubari (staff-match.ts applyPairRule): from her hire date
+  const [{ pairFrom }] = await sql`select to_char(min(m.hire_date), 'YYYY-MM-DD') as "pairFrom" from member m join "user" u on u.id = m.user_id where lower(u.name) = ${PAIR.sales.toLowerCase()} and m.hire_date is not null`;
   const newIds: string[] = [];
 
   const plan: string[] = [];
@@ -136,9 +139,14 @@ async function main() {
     const billTo = str(r["INNOSYS BILL TO AFFIRMA"]);
     const invId = nanoid(), doId = nanoid();
     const salesRaw = str(r["Sales Person"]);
-    const salesPeople = staffOf(salesRaw);
+    const matched = staffOf(salesRaw);
+    // a label naming two people is two sales persons and no application specialist; one person is both
+    const caseDay = caseDate ? `${caseDate.getFullYear()}-${String(caseDate.getMonth() + 1).padStart(2, "0")}-${String(caseDate.getDate()).padStart(2, "0")}` : null;
+    const people = matched ? applyPairRule({ sales: matched, specialist: matched.length === 1 ? matched[0] : null }, caseDay, pairFrom, allStaff) : null;
+    const salesPeople = people?.sales ?? null;
     const salesAcc = salesPeople?.[0] ?? null;
     const sales = salesAcc?.name ?? salesRaw;
+    const spec = people ? people.specialist : null;
 
     plan.push(`${g.invoiceNo} / ${doNo} · ${invDate.toLocaleDateString("en-MY")} · ${snapshot?.name ?? "—"} · ${hosp?.name ?? "—"} · ${caseType ?? "—"} · RM ${Number(total).toFixed(2)} · ${status}`);
 
@@ -150,7 +158,7 @@ async function main() {
       values (${doId}, ${g.orgId}, ${doNo}, ${str(r["SALES ORDER NO"])}, ${str(r["LPO"])}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${snapshot?.name ?? null}, ${hosp?.address ?? null}, ${iso(invDate)}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${doStatus(status)}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json)`;
     if (caseType) await sql`insert into delivery_order_item (id, delivery_order_id, row_no, description, qty) values (${nanoid()}, ${doId}, 1, ${caseType}, '1')`;
     await sql`insert into invoice (id, organization_id, invoice_no, invoice_date, sales_person_id, application_specialist_id, associate_sales_persons, sales_person_name, application_specialist_name, customer_id, customer_snapshot, customer_po_no, sales_order_no, grand_total, subtotal, status, paid_at, payment_ref, soa_verified, case_date, case_type, case_time, mrn_no, notes, created_by, category_ids, delivery_order_id, delivery_order_no)
-      values (${invId}, ${g.orgId}, ${g.invoiceNo}, ${iso(invDate)}, ${salesAcc?.id ?? null}, ${salesAcc?.id ?? null}, ${JSON.stringify((salesPeople ?? []).map((p) => ({ id: p.id, name: p.name })))}::json, ${sales}, ${sales}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${str(r["LPO"])}, ${str(r["SALES ORDER NO"])}, ${total}, ${total}, ${status}, ${iso(toDate(r["PAYMENT DATE"]))}, ${str(r["PAYMENT REF"])}, ${false}, ${iso(caseDate)}, ${caseType}, ${str(r["TIME"])}, ${str(r["MRN NO"])}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json, ${doId}, ${doNo})`;
+      values (${invId}, ${g.orgId}, ${g.invoiceNo}, ${iso(invDate)}, ${salesAcc?.id ?? null}, ${spec?.id ?? null}, ${JSON.stringify((salesPeople ?? []).map((p) => ({ id: p.id, name: p.name })))}::json, ${sales}, ${spec ? spec.name : matched ? null : salesRaw}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${str(r["LPO"])}, ${str(r["SALES ORDER NO"])}, ${total}, ${total}, ${status}, ${iso(toDate(r["PAYMENT DATE"]))}, ${str(r["PAYMENT REF"])}, ${false}, ${iso(caseDate)}, ${caseType}, ${str(r["TIME"])}, ${str(r["MRN NO"])}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json, ${doId}, ${doNo})`;
     newIds.push(invId);
     // commission (as the sync: only when the sheet has something for it)
     const claimedBy = pick("ATTEND COMMISSION CLAIM BY"), docs = pick("DOCS");

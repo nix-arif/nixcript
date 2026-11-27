@@ -5,8 +5,9 @@
  * as the app does (recomputeInvoiceAllowances). Staff of any of the owner's companies count (a case is
  * often covered by someone from a sibling company).
  *
- * As the other linked invoices: the sales person and application specialist are the first person,
- * and the sales persons list (associate_sales_persons) has everyone, the first included. A label with
+ * As the other linked invoices: the sales person is the first person and the sales persons list
+ * (associate_sales_persons) has everyone, the first included. One person is also the application
+ * specialist; a two-person label is two sales persons and no application specialist. A label with
  * a name that has no account stays as text. Invoices already linked only get the list filled in when
  * it is empty.
  *
@@ -54,8 +55,11 @@ async function main() {
         sales_person_id: first.id, sales_person_name: first.name,
         associate_sales_persons: people.map((p) => ({ id: p.id, name: p.name })),
       };
-      // the application specialist: the one on the case, when the system has the same label for it
-      if (!i.application_specialist_id && (!i.application_specialist_name || i.application_specialist_name === i.sales_person_name || match(i.application_specialist_name)?.[0]?.id === first.id)) {
+      // the application specialist: the one person, when the system has the same label for it. A label naming two
+      // people ("Hadif ( Ziyad )") is two sales persons and no application specialist.
+      if (people.length > 1) {
+        if (!i.application_specialist_id && i.application_specialist_name === i.sales_person_name) { set.application_specialist_id = null; set.application_specialist_name = null; set.clearAs = true; }
+      } else if (!i.application_specialist_id && (!i.application_specialist_name || i.application_specialist_name === i.sales_person_name || match(i.application_specialist_name)?.[0]?.id === first.id)) {
         set.application_specialist_id = first.id; set.application_specialist_name = first.name;
       }
       todo.push({ id: i.id, no: i.invoice_no, set, label: i.sales_person_name, recompute: true });
@@ -77,8 +81,8 @@ async function main() {
     await sql`update invoice set
       sales_person_id = coalesce(${s.sales_person_id ?? null}, sales_person_id),
       sales_person_name = coalesce(${s.sales_person_name ?? null}, sales_person_name),
-      application_specialist_id = coalesce(${s.application_specialist_id ?? null}, application_specialist_id),
-      application_specialist_name = coalesce(${s.application_specialist_name ?? null}, application_specialist_name),
+      application_specialist_id = case when ${!!s.clearAs} then null else coalesce(${s.application_specialist_id ?? null}, application_specialist_id) end,
+      application_specialist_name = case when ${!!s.clearAs} then null else coalesce(${s.application_specialist_name ?? null}, application_specialist_name) end,
       associate_sales_persons = ${JSON.stringify(s.associate_sales_persons)}::json,
       updated_at = now()
       where id = ${t.id}`;
