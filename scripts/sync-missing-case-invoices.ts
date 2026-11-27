@@ -22,6 +22,10 @@ import {
 import { sheetRows } from "./case-sheet";
 
 const apply = process.argv.includes("--apply");
+// Dates go to the database as ISO strings: a Date is sent as its local wall-clock time, which put
+// Malaysia midnight 8 hours late (00:00 UTC instead of 16:00 UTC the day before)
+const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+
 const orgOf = (company: unknown, invoiceNo: string) =>
   resolveOrgId(company) ?? (/^INVAF\//i.test(invoiceNo) ? ORG.affirma : /^INVSI\//i.test(invoiceNo) ? ORG.innosys : null);
 const doStatus = (s: string) => (s === "paid" || s === "sent" || s === "overdue" ? "delivered" : s === "cancelled" ? "returned" : "draft");
@@ -130,17 +134,17 @@ async function main() {
 
     if (!apply) continue;
     await sql`insert into delivery_order (id, organization_id, do_no, sales_order_no, customer_po_no, customer_id, customer_snapshot, delivered_to, delivery_address, delivery_date, notes, status, created_by, category_ids)
-      values (${doId}, ${g.orgId}, ${doNo}, ${str(r["SALES ORDER NO"])}, ${str(r["LPO"])}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${snapshot?.name ?? null}, ${hosp?.address ?? null}, ${invDate}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${doStatus(status)}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json)`;
+      values (${doId}, ${g.orgId}, ${doNo}, ${str(r["SALES ORDER NO"])}, ${str(r["LPO"])}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${snapshot?.name ?? null}, ${hosp?.address ?? null}, ${iso(invDate)}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${doStatus(status)}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json)`;
     if (caseType) await sql`insert into delivery_order_item (id, delivery_order_id, row_no, description, qty) values (${nanoid()}, ${doId}, 1, ${caseType}, '1')`;
     await sql`insert into invoice (id, organization_id, invoice_no, invoice_date, sales_person_name, application_specialist_name, customer_id, customer_snapshot, customer_po_no, sales_order_no, grand_total, subtotal, status, paid_at, payment_ref, soa_verified, case_date, case_type, case_time, mrn_no, notes, created_by, category_ids, delivery_order_id, delivery_order_no)
-      values (${invId}, ${g.orgId}, ${g.invoiceNo}, ${invDate}, ${sales}, ${sales}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${str(r["LPO"])}, ${str(r["SALES ORDER NO"])}, ${total}, ${total}, ${status}, ${toDate(r["PAYMENT DATE"]) ?? null}, ${str(r["PAYMENT REF"])}, ${false}, ${caseDate}, ${caseType}, ${str(r["TIME"])}, ${str(r["MRN NO"])}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json, ${doId}, ${doNo})`;
+      values (${invId}, ${g.orgId}, ${g.invoiceNo}, ${iso(invDate)}, ${sales}, ${sales}, ${cust?.id ?? null}, ${snapshot ? JSON.stringify(snapshot) : null}::json, ${str(r["LPO"])}, ${str(r["SALES ORDER NO"])}, ${total}, ${total}, ${status}, ${iso(toDate(r["PAYMENT DATE"]))}, ${str(r["PAYMENT REF"])}, ${false}, ${iso(caseDate)}, ${caseType}, ${str(r["TIME"])}, ${str(r["MRN NO"])}, ${billTo ? `Innosys bill to Affirma: ${billTo}` : null}, ${CREATED_BY}, ${JSON.stringify(categoryIds)}::json, ${doId}, ${doNo})`;
     // commission (as the sync: only when the sheet has something for it)
     const claimedBy = pick("ATTEND COMMISSION CLAIM BY"), docs = pick("DOCS");
     const attend = pickMoney("COMMISSION AMOUNT"), surgeon = pickMoney("SURGEON COMMISSION"), surgeonPaid = pickDate("PAYMENT DATE_1");
     const incentive = pickMoney("Incentive"), actual = pickMoney("Actual Amount");
     if (claimedBy || docs || Number(attend) > 0 || Number(surgeon) > 0 || surgeonPaid || Number(incentive) > 0 || Number(actual) > 0)
       await sql`insert into case_commission (id, invoice_id, organization_id, claimed_by, docs, attend_amount, surgeon_amount, surgeon_paid_at, incentive, actual_amount)
-        values (${nanoid()}, ${invId}, ${g.orgId}, ${claimedBy}, ${docs}, ${attend}, ${surgeon}, ${surgeonPaid}, ${incentive}, ${actual})`;
+        values (${nanoid()}, ${invId}, ${g.orgId}, ${claimedBy}, ${docs}, ${attend}, ${surgeon}, ${iso(surgeonPaid)}, ${incentive}, ${actual})`;
   }
 
   console.log(`\n${apply ? "Added" : "Would add"} ${plan.length} invoices with their DOs:`);

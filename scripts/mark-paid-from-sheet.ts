@@ -55,8 +55,9 @@ async function main() {
   if (skipped.length) { console.log(`\nLeft alone (${skipped.length}):`); for (const s of skipped) console.log("  " + s); }
   if (!apply || todo.length === 0) return;
 
+  // (the date as an ISO string: a Date is sent as its local wall-clock time, 8 hours late)
   for (const t of todo)
-    await sql`update invoice set status = 'paid', paid_amount = ${t.total}, paid_at = ${t.paidAt}, payment_ref = ${t.ref}, updated_at = now()
+    await sql`update invoice set status = 'paid', paid_amount = ${t.total}, paid_at = ${t.paidAt ? t.paidAt.toISOString() : null}, payment_ref = ${t.ref}, updated_at = now()
       where id = ${t.id} and status in ('sent', 'overdue')`;
 
   // the invoice list's summary figures (invoice_stats), as server/invoice.ts refreshInvoiceStats
