@@ -27,6 +27,7 @@ import { buildCustomerSnapshot } from "@/server/customer";
 import { nanoid } from "nanoid";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
 import { soLineQty } from "@/lib/sales-order/set-qty";
+import { soProcurementStages, type SoProcurement } from "@/lib/sales-order/procurement-stage";
 import { uniqueCpoNoFor } from "@/lib/customer-po/unique-no";
 import { eq, and, ne, desc, asc, inArray, sql, or, ilike } from "drizzle-orm";
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
@@ -1937,4 +1938,11 @@ export async function toggleSoItemApprovalRejected(itemId: string, rejected: boo
 
   revalidatePath(`/dashboard/sales/order/${item.salesOrderId}`);
   return { rejectedByName, rejectedAt: now };
+}
+
+// How far buying has got for each confirmed SO that's short of stock (the "Pending PR" tag tells
+// the truth: PR raised / ordered / partly received). Any org of the owner's (lists can be centralized).
+export async function getSoProcurementStages(soIds: string[]): Promise<Record<string, SoProcurement>> {
+  const { orgId, userId } = await requireAccess("sales-order:read").catch(() => requireAccess("sales-order:read:centralized"));
+  return soProcurementStages(await getAllOwnerOrgIds(userId, orgId), soIds.slice(0, 500));
 }

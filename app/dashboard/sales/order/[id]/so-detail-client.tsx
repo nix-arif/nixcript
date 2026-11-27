@@ -396,7 +396,7 @@ export function SalesOrderDetailClient({
                 {status !== "draft" && (
                   <>
                     <StatusBadge status={status} />
-                    <SoStockChip status={status} stockReservationStatus={stockStatus} />
+                    <SoStockChip status={status} stockReservationStatus={stockStatus} soId={order.id} />
                   </>
                 )}
                 {showEdit && (
@@ -422,7 +422,7 @@ export function SalesOrderDetailClient({
             ) : (
               <>
                 <StatusBadge status={status} />
-                <SoStockChip status={status} stockReservationStatus={stockStatus} />
+                <SoStockChip status={status} stockReservationStatus={stockStatus} soId={order.id} />
                 {status !== "fulfilled" && can("sales-order:approve") && !cancelBlocker && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleCancel} disabled={actioning !== null}>
                     <XIcon className="w-3.5 h-3.5" /> {actioning === "cancel" ? "Cancelling…" : "Cancel"}
@@ -986,7 +986,7 @@ export function SalesOrderDetailClient({
             <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Status</h2>
             <div className="mb-3 flex items-center gap-2 flex-wrap">
               <StatusBadge status={status} />
-              <SoStockChip status={status} stockReservationStatus={stockStatus} />
+              <SoStockChip status={status} stockReservationStatus={stockStatus} soId={order.id} />
               {order.soType === "proforma" && (
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 capitalize">
                   Pro-forma · {order.proformaReason ?? ""}

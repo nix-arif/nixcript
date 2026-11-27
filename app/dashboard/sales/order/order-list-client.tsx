@@ -316,7 +316,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                       </span>
                       <RevBadge revision={revs[o.id]} />
                       <StatusBadge status={o.status} />
-                      <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} />
+                      <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} soId={o.id} />
                       {o.soType === "proforma" && (
                         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 capitalize hidden sm:inline">
                           {o.proformaReason ?? "Pro-forma"}

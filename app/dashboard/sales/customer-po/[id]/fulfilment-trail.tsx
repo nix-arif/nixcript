@@ -489,7 +489,7 @@ export function FulfilmentTrailClient({
                   docNo={so.soNo}
                   statusLabel={soStatusCfg(so.status).label}
                   statusColor={soStatusCfg(so.status).color}
-                  meta={<span className="flex items-center gap-2"><SoStockChip status={so.status} stockReservationStatus={so.stockReservationStatus} />{fmtDate(so.createdAt)}</span>}
+                  meta={<span className="flex items-center gap-2"><SoStockChip status={so.status} stockReservationStatus={so.stockReservationStatus} soId={so.id} />{fmtDate(so.createdAt)}</span>}
                   onClick={() => router.push(`/dashboard/sales/order/${so.id}`)}
                   actions={actions?.so}
                   busy={busyId === so.id}

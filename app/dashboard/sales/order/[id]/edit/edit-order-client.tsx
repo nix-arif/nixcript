@@ -1023,7 +1023,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
               <FileSpreadsheetIcon className="w-3.5 h-3.5" /> Excel
             </Button>
             <StatusBadge status={status} />
-            <SoStockChip status={status} stockReservationStatus={order.stockReservationStatus} />
+            <SoStockChip status={status} stockReservationStatus={order.stockReservationStatus} soId={order.id} />
             {canDelete && (
               <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting || saving}>
                 <TrashIcon className="w-3.5 h-3.5" /> {deleting ? "Deleting…" : "Delete"}

@@ -195,7 +195,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
                       </span>
                       <RevBadge revision={revs[o.id]} />
                       <StatusBadge status={o.status} />
-                      <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} />
+                      <SoStockChip status={o.status} stockReservationStatus={o.stockReservationStatus} soId={o.id} />
                       <span className="text-[10px] font-medium text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 rounded px-1.5 py-0.5">
                         <Highlight text={o.organizationName} query={search} />
                       </span>
