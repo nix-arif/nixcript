@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CategoryOption } from "@/server/document-category-chain";
-import { CpoCategoryFilter, CpoCategoryTags, CpoRecordCount, CpoStatCards, useCpoFilters } from "../cpo-list-filters";
+import { CategoryFilter, CategoryTags, CPO_STATS, RecordCount, StatCards, useListFilters } from "@/components/list-stat-filters";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -67,7 +67,7 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external", cat
 
   // the stat cards count the company chosen (and the categories chosen)
   const inOrg = orgFilter ? pos.filter((p) => p.organizationName === orgFilter) : pos;
-  const f = useCpoFilters(inOrg, categories, true);
+  const f = useListFilters(inOrg, categories, CPO_STATS, true);
 
   const revs = useRevisions("cpo", pos.map((x) => x.id)); // amended: Rev N by the number
   const filtered = f.inScope.filter((p) => {
@@ -114,8 +114,8 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external", cat
         }
       />
 
-      <CpoStatCards f={f} />
-      <CpoCategoryFilter f={f} />
+      <StatCards f={f} />
+      <CategoryFilter f={f} />
 
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="relative flex-1 min-w-48">
@@ -160,7 +160,7 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external", cat
         )}
       </div>
 
-      <CpoRecordCount f={f} count={filtered.length} />
+      <RecordCount f={f} count={filtered.length} />
 
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
@@ -242,7 +242,7 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external", cat
                           <Highlight text={snap.organizationName} query={search} />
                         </span>
                       )}
-                      <CpoCategoryTags list={f.categoriesOf(p)} query={search} />
+                      <CategoryTags list={f.categoriesOf(p)} query={search} />
                       <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
                         {fmt(p.amount)} {p.currency !== "MYR" ? p.currency : ""}
                       </span>

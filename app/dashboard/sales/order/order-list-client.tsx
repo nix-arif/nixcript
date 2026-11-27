@@ -27,6 +27,8 @@ import {
 import { type CustomerPoSearchResult } from "@/server/customer-purchase-order";
 
 import { cn } from "@/lib/utils";
+import { CategoryFilter, CategoryTags, RecordCount, SO_STATS, StatCards, useListFilters } from "@/components/list-stat-filters";
+import type { CategoryOption } from "@/server/document-category-chain";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -63,9 +65,11 @@ interface Props {
   pendingCpos?: CustomerPoSearchResult[];
   // SO id → why it can't be deleted (linked documents). Delete is hidden for these.
   deleteBlockers?: Record<string, string>;
+  /** This company's categories, for the filter chips */
+  categories?: CategoryOption[];
 }
 
-export function SalesOrderListClient({ initialOrders, permissions, currentUserId, pendingCpos = [], deleteBlockers = {} }: Props) {
+export function SalesOrderListClient({ initialOrders, permissions, currentUserId, pendingCpos = [], deleteBlockers = {}, categories = [] }: Props) {
   const can = (p: string) => permissions.includes("*") || permissions.includes(p);
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -98,8 +102,11 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
     setOrgSwitching(false);
   }, [initialOrders]);
 
+  const f = useListFilters(initialOrders, categories, SO_STATS);
+
   const revs = useRevisions("so", initialOrders.map((x) => x.id)); // amended: Rev N by the number
-  const filtered = initialOrders.filter((o) => {
+  const filtered = f.inScope.filter((o) => {
+    if (!f.inBucketNow(o)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = o.customerSnapshot as any;
@@ -113,7 +120,8 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
       snap?.organizationName?.toLowerCase().includes(s) ||
       cpoTerms.some((t) => t.toLowerCase().includes(s)) ||
       o.salesPersonName?.toLowerCase().includes(s) ||
-      o.status.toLowerCase().includes(s)
+      o.status.toLowerCase().includes(s) ||
+      f.searchCats(o, s)
     );
   });
 
@@ -147,12 +155,16 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
         }
       />
 
+      {/* Stat cards: each one filters the list (click again to show everything) */}
+      <StatCards f={f} />
+      <CategoryFilter f={f} />
+
       <div className="relative mb-4">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by SO no., customer, status..."
+          placeholder="Search by SO no., customer, status, category..."
           className="pl-9 h-9 text-sm"
         />
         {search && (
@@ -256,11 +268,11 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
         </div>
       ) : filtered.length === 0 ? (
         <>
-          <div className="text-xs text-muted-foreground mb-3 tabular-nums">0 orders</div>
+          <RecordCount f={f} count={0} noun="order" />
           <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium mb-1">No sales orders yet</div>
-          <div className="text-xs mb-4">Create your first sales order to get started</div>
+          <div className="text-sm font-medium mb-1">{f.anyActive || search ? "No sales orders match" : "No sales orders yet"}</div>
+          <div className="text-xs mb-4">{f.anyActive || search ? "Try another card, category or search." : "Create your first sales order to get started"}</div>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/sales/order/create")}>
             <PlusIcon className="w-3.5 h-3.5" /> New SO
           </Button>
@@ -268,9 +280,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
         </>
       ) : (
         <>
-          <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-            {filtered.length} order{filtered.length !== 1 ? "s" : ""}
-          </div>
+          <RecordCount f={f} count={filtered.length} noun="order" />
           <div className="space-y-2">
           {filtered.map((o) => {
             const snap = o.customerSnapshot as any;
@@ -386,6 +396,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                           {o.salesPersonName}
                         </span>
                       )}
+                      <CategoryTags list={f.categoriesOf(o)} query={search} />
                     </div>
                     <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                       {can("sales-order:update") && EDITABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (

@@ -21,6 +21,8 @@ import {
   LayersIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CategoryFilter, CategoryTags, RecordCount, SO_STATS, StatCards, useListFilters } from "@/components/list-stat-filters";
+import type { CategoryOption } from "@/server/document-category-chain";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -45,9 +47,11 @@ function StatusBadge({ status }: { status: string }) {
 
 interface Props {
   initialOrders: CentralizedSalesOrder[];
+  /** Every company's categories (the filter chips go by name) */
+  categories?: CategoryOption[];
 }
 
-export function CentralizedSalesOrderClient({ initialOrders }: Props) {
+export function CentralizedSalesOrderClient({ initialOrders, categories = [] }: Props) {
   const router = useRouter();
   const [orders, setOrders] = useState(initialOrders);
   // Server data re-sent (live refresh / router.refresh): show it
@@ -59,9 +63,13 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
 
   const orgs = [...new Set(orders.map((o) => o.organizationName))].sort();
 
+  // the stat cards count the company chosen (and the categories chosen)
+  const inOrg = orgFilter ? orders.filter((o) => o.organizationName === orgFilter) : orders;
+  const f = useListFilters(inOrg, categories, SO_STATS, true);
+
   const revs = useRevisions("so", orders.map((x) => x.id)); // amended: Rev N by the number
-  const filtered = orders.filter((o) => {
-    if (orgFilter && o.organizationName !== orgFilter) return false;
+  const filtered = f.inScope.filter((o) => {
+    if (!f.inBucketNow(o)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = o.customerSnapshot as any;
@@ -77,7 +85,8 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
       snap?.name?.toLowerCase().includes(s) ||
       snap?.organizationName?.toLowerCase().includes(s) ||
       o.organizationName.toLowerCase().includes(s) ||
-      cpoMatch
+      cpoMatch ||
+      f.searchCats(o, s)
     );
   });
 
@@ -105,13 +114,16 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
         }
       />
 
+      <StatCards f={f} />
+      <CategoryFilter f={f} />
+
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by SO no., customer, QT no., CPO no., organization…"
+            placeholder="Search by SO no., customer, QT no., CPO no., organization, category…"
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -148,9 +160,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
         )}
       </div>
 
-      <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} order{filtered.length !== 1 ? "s" : ""}
-      </div>
+      <RecordCount f={f} count={filtered.length} noun="order" />
 
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
@@ -229,6 +239,7 @@ export function CentralizedSalesOrderClient({ initialOrders }: Props) {
                           {o.createdByName}
                         </span>
                       )}
+                      <CategoryTags list={f.categoriesOf(o)} query={search} />
                       <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
                         {fmt(o.grandTotal)}
                       </span>
