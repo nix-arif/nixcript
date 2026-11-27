@@ -182,6 +182,15 @@ function Pagination({ page, totalPages, onPage }: { page: number; totalPages: nu
 
 // ── Main component ─────────────────────────────────────────────────────────
 
+// Fields the search looks in (server/invoice.ts getInvoices) that the row doesn't show
+function hiddenMatches(inv: { mrnNo?: string | null; caseType?: string | null }, search: string): { label: string; text: string }[] {
+  const q = search.trim().toLowerCase();
+  if (!q) return [];
+  return ([["MRN", inv.mrnNo], ["case type", inv.caseType]] as const)
+    .filter(([, v]) => !!v && v.toLowerCase().includes(q))
+    .map(([label, v]) => ({ label, text: v as string }));
+}
+
 const EDITABLE_STATUSES  = new Set(["draft"]);
 const DELETABLE_STATUSES = new Set(["draft", "cancelled"]);
 
@@ -234,8 +243,16 @@ export function InvoiceListClient({
 
   useEffect(() => { setOrgSwitching(false); }, [initialInvoices]);
 
-  // Sync local state when server props change (org switch, back/forward)
-  useEffect(() => { setSearchInput(initialSearch); }, [initialSearch]);
+  // The search box follows the URL only when the URL changed by itself (back/forward, org switch), not when
+  // the server answers a search sent from the box: by then more may have been typed, and it must stay.
+  // sentSearch: what the URL has, or was last sent. Adjusted while rendering, as React recommends.
+  const [sentSearch, setSentSearch]   = useState(initialSearch);
+  const [shownSearch, setShownSearch] = useState(initialSearch);
+  if (shownSearch !== initialSearch) {
+    setShownSearch(initialSearch);
+    // (trimmed: "john " typed on the way to "john doe" is the search "john" the server answers)
+    if (initialSearch.trim() !== sentSearch.trim()) { setSearchInput(initialSearch); setSentSearch(initialSearch); }
+  }
   useEffect(() => { setStatusFilter(initialStatus); }, [initialStatus]);
   // the inputs follow the range as the server applied it (back/forward, a reversed range comes back swapped, a bad
   // date dropped). Adjusted while rendering, as React recommends, rather than in an effect.
@@ -249,24 +266,29 @@ export function InvoiceListClient({
   // ── URL navigation ────────────────────────────────────────────────────
 
   const pushParams = useCallback(
-    (updates: Record<string, string>) => {
+    (updates: Record<string, string>, opts: { replace?: boolean } = {}) => {
       const params = new URLSearchParams(window.location.search);
       Object.entries(updates).forEach(([k, v]) => {
         if (v) params.set(k, v);
         else params.delete(k);
       });
-      router.push(`${pathname}?${params.toString()}`);
+      const url = `${pathname}?${params.toString()}`;
+      if (opts.replace) router.replace(url); else router.push(url);
     },
     [pathname, router],
   );
 
-  // Debounce search → URL
+  // Debounce search → URL. Only a changed search is sent (opening the list must not send it again: that
+  // dropped the page number), and it replaces the history entry instead of adding one per pause in typing.
   useEffect(() => {
+    const q = searchInput.trim();
+    if (q === sentSearch.trim()) return;
     const t = setTimeout(() => {
-      pushParams({ search: searchInput, page: "" });
+      setSentSearch(searchInput);
+      pushParams({ search: q, page: "" }, { replace: true });
     }, 350);
     return () => clearTimeout(t);
-  }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchInput, sentSearch, pushParams]);
 
   const handleStatusFilter = (v: string) => {
     setStatusFilter(v);
@@ -664,6 +686,12 @@ export function InvoiceListClient({
                               SO: <Highlight text={inv.salesOrderNo} query={searchInput} />
                             </div>
                           )}
+                          {/* searched but not shown in the row: say where the search matched */}
+                          {hiddenMatches(inv, searchInput).map((m) => (
+                            <div key={m.label} className="mt-0.5 text-[10px] text-muted-foreground" title="Where your search matched">
+                              matched {m.label}: <Highlight text={m.text} query={searchInput} />
+                            </div>
+                          ))}
                         </td>
 
                         <td className="px-3 py-2.5">

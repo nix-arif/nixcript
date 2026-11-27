@@ -6,9 +6,11 @@ interface Props {
 
 export function Highlight({ text, query, className }: Props) {
   const str = text ?? "";
-  if (!query.trim() || !str) return <span className={className}>{str}</span>;
+  // the search ignores spaces at the ends ("cheras " finds "Cheras"), so the highlight does too
+  const q = query.trim();
+  if (!q || !str) return <span className={className}>{str}</span>;
 
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const parts = str.split(new RegExp(`(${escaped})`, "gi"));
 
   return (

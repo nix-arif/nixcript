@@ -293,7 +293,8 @@ export async function getInvoices(opts: {
   if (opts.status === "unpaid") conditions.push(inArray(invoice.status, ["sent", "overdue"]) as any);
   else if (opts.status) conditions.push(eq(invoice.status, opts.status) as any);
   if (opts.search?.trim()) {
-    const q = `%${opts.search.trim()}%`;
+    // % and _ are searched for as themselves, not as wildcards (\ is ILIKE's escape character)
+    const q = `%${opts.search.trim().replace(/[\\%_]/g, "\\$&")}%`;
     conditions.push(or(
       sql`${invoice.invoiceNo} ILIKE ${q}`,
       sql`${invoice.customerPoNo} ILIKE ${q}`,
