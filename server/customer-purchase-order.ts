@@ -655,7 +655,8 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
     })
     .where(eq(customerPurchaseOrder.id, input.id))
     .returning();
-  if (oldDocument) await deleteDocumentAfterSave(oldDocument);
+  // an amendment keeps the customer's earlier document: the earlier revision still shows it
+  if (oldDocument && !opts.amending) await deleteDocumentAfterSave(oldDocument);
   if (renamed) await renameCustomerPoNoOnDocuments(existing, oldNo, newNo);
   // recorded now: tell the sales approvers, as if it had just been received
   if (wasDraft && !staysDraft && nextStatus !== "cancelled") await notifyNewCpo(existing.organizationId, userId, existing.id, newNo, row.customerSnapshot);
@@ -702,7 +703,7 @@ export async function amendCustomerPo(
 
   const row = await applyCustomerPoUpdate(existing, update, userId, { amending: true });
   // only supplier POs re-priced (the CPO's lines are as they were): the CPO gets no new revision
-  const cpoAmendmentId = work.plan.soChanged ? await recordCpoAmendment(row, userId, reason.trim(), work.plan) : nanoid();
+  const cpoAmendmentId = work.plan.soChanged ? await recordCpoAmendment(existing, userId, reason.trim(), work.plan, row.customerPoNo) : nanoid();
   const down = await applyAmendmentDownstream(work, userId, reason.trim(), amendPoIds, cpoAmendmentId);
 
   // the sales approvers: the SO is back for approval

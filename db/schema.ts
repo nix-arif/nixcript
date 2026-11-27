@@ -3610,7 +3610,9 @@ export const documentAmendment = pgTable(
     reason: text("reason").notNull(),
     // the customer PO amendment this came from (the same id on its SO and supplier PO rows)
     sourceAmendmentId: text("source_amendment_id"),
-    changes: json("changes").$type<{ summary: string[] }>().notNull(),
+    // summary: what changed, in words; before: the whole document as it was before this revision
+    // (its header and lines), to view, compare and print old versions (none on the first amendments)
+    changes: json("changes").$type<{ summary: string[]; before?: { doc: Record<string, unknown>; items: Record<string, unknown>[] } }>().notNull(),
     createdBy: text("created_by").notNull().references(() => user.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

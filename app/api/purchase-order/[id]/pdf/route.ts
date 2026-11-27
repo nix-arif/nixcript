@@ -1,5 +1,5 @@
 import { getPoForPrint } from "@/server/purchase-order";
-import { currentRevision } from "@/lib/amendment/customer-po";
+import { currentRevision, versionSnapshot, reviveDates } from "@/lib/amendment/customer-po";
 import { generatePurchaseOrderPdf, type PoPdfOptions } from "@/app/dashboard/procurement/purchase-order/[id]/print/generate-po-pdf";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -50,11 +50,21 @@ export async function GET(req: Request, { params }: Props) {
   }
 
   if (!data) return new Response("Not Found", { status: 404 });
+
+  // ?rev=N: an earlier version (Rev N), as it was kept by the amendment after it
+  const current = await currentRevision("po", id);
+  const revParam = url.searchParams.get("rev");
+  const rev = revParam !== null && /^\d+$/.test(revParam) ? parseInt(revParam, 10) : current;
+  if (rev < current) {
+    const snap = await versionSnapshot("po", id, rev);
+    if (!snap) return new Response(`Rev ${rev} of this purchase order wasn't kept`, { status: 404 });
+    data = { ...data, order: { ...data.order, ...reviveDates(snap.doc) }, items: snap.items.map((i) => reviveDates(i)) as typeof data.items };
+  }
   if (data.order.status !== "confirmed") {
     return new Response("PDF is only available for confirmed purchase orders", { status: 403 });
   }
 
-  const options: PoPdfOptions = { withImages, revision: await currentRevision("po", id) };
+  const options: PoPdfOptions = { withImages, revision: Math.min(rev, current) };
 
   if (withImages) {
     const itemImages: PoPdfOptions["itemImages"] = new Map();

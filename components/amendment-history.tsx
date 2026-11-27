@@ -2,9 +2,11 @@
 
 // A document's amendments (Rev 1, Rev 2…): when, by whom, why and what changed.
 // Shown on the customer PO, sales order and supplier PO pages; nothing when it was never amended.
+// "View versions" opens every version, to compare and print (document-versions-dialog.tsx).
 
 import { useEffect, useState } from "react";
-import { FilePenLineIcon } from "lucide-react";
+import { FilePenLineIcon, HistoryIcon } from "lucide-react";
+import { DocumentVersionsDialog } from "@/components/document-versions-dialog";
 import { getDocumentAmendments, getDocumentRevisions } from "@/server/amendment";
 import type { AmendmentRecord, DocType } from "@/lib/amendment/customer-po";
 
@@ -19,6 +21,7 @@ export function AmendmentHistory({
   onRevision?: (revision: number) => void;
 }) {
   const [rows, setRows] = useState<AmendmentRecord[] | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
   useEffect(() => {
     let live = true;
     getDocumentAmendments(docType, docId)
@@ -35,7 +38,12 @@ export function AmendmentHistory({
       <h2 className="flex items-center gap-2 text-sm font-semibold">
         <FilePenLineIcon className="h-4 w-4 text-amber-600" /> Amendments
         <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Rev {rows[0].revision}</span>
+        <button type="button" onClick={() => setVersionsOpen(true)}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-muted">
+          <HistoryIcon className="h-3.5 w-3.5" /> View versions
+        </button>
       </h2>
+      <DocumentVersionsDialog docType={docType} docId={docId} open={versionsOpen} onOpenChange={setVersionsOpen} />
       <ol className="space-y-3">
         {rows.map((r) => (
           <li key={r.id} className="text-xs">

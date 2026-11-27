@@ -51,6 +51,15 @@ type CpoLine = NonNullable<CpoRow["items"]>[number];
 
 export type DocType = "cpo" | "so" | "po";
 
+/** A whole document as it was at one revision: its header and its lines. */
+export type DocSnapshot = { doc: Record<string, unknown>; items: Record<string, unknown>[] };
+
+const snapshot = (doc: Record<string, unknown>, items: Record<string, unknown>[]): DocSnapshot => {
+  const { items: _lines, ...header } = doc as Record<string, unknown> & { items?: unknown };
+  void _lines;
+  return JSON.parse(JSON.stringify({ doc: header, items }));
+};
+
 export type AmendLineChange = {
   productCode: string | null;
   description: string | null;
@@ -478,13 +487,16 @@ const lineSummary = (l: AmendLineChange) => {
   return `${what}: ${qtyText(l.oldQty)} → ${qtyText(l.newQty)}, ${money(l.oldTotal)} → ${money(l.newTotal)}`;
 };
 
-/** Records the CPO's own revision (its lines were saved by the caller). Returns its id. */
-export async function recordCpoAmendment(cpo: CpoRow, userId: string, reason: string, plan: AmendmentPlan): Promise<string> {
+/**
+ * Records the CPO's own revision. before: the CPO as it was (the version this revision replaces);
+ * docNo: its number now. Returns the record's id.
+ */
+export async function recordCpoAmendment(before: CpoRow, userId: string, reason: string, plan: AmendmentPlan, docNo = before.customerPoNo): Promise<string> {
   const id = nanoid();
   await db.insert(documentAmendment).values({
-    id, organizationId: cpo.organizationId, docType: "cpo", docId: cpo.id, docNo: cpo.customerPoNo,
+    id, organizationId: before.organizationId, docType: "cpo", docId: before.id, docNo,
     revision: plan.cpoRevision, reason, sourceAmendmentId: id,
-    changes: { summary: plan.lines.map(lineSummary) },
+    changes: { summary: plan.lines.map(lineSummary), before: snapshot(before as unknown as Record<string, unknown>, (before.items ?? []) as unknown as Record<string, unknown>[]) },
     createdBy: userId,
   });
   return id;
@@ -538,7 +550,10 @@ export async function applyAmendmentDownstream(
   await db.insert(documentAmendment).values({
     id: nanoid(), organizationId: orgId, docType: "so", docId: so.id, docNo: so.soNo,
     revision: plan.so.revision, reason, sourceAmendmentId,
-    changes: { summary: [...plan.lines.map(lineSummary), `Total ${money(plan.so.oldTotal)} → ${money(plan.so.newTotal)}`, `From customer PO ${plan.cpoNo} Rev ${plan.cpoRevision}`] },
+    changes: {
+      summary: [...plan.lines.map(lineSummary), `Total ${money(plan.so.oldTotal)} → ${money(plan.so.newTotal)}`, `From customer PO ${plan.cpoNo} Rev ${plan.cpoRevision}`],
+      before: snapshot(so as unknown as Record<string, unknown>, oldSoItems as unknown as Record<string, unknown>[]),
+    },
     createdBy: userId,
   });
   }
@@ -549,6 +564,9 @@ export async function applyAmendmentDownstream(
   const chosen = plan.poActions.filter((a) => a.auto && amendPoIds.includes(a.poId));
   for (const poId of [...new Set(chosen.map((a) => a.poId))]) {
     const acts = chosen.filter((a) => a.poId === poId);
+    // the PO as it was, kept with its revision
+    const [poBefore] = await db.select().from(purchaseOrder).where(eq(purchaseOrder.id, poId));
+    const poItemsBefore = await db.select().from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, poId)).orderBy(asc(purchaseOrderItem.rowNo));
     for (const a of acts) {
       if (a.toQty <= 1e-9) {
         await db.delete(purchaseOrderItem).where(eq(purchaseOrderItem.id, a.poItemId));
@@ -574,7 +592,7 @@ export async function applyAmendmentDownstream(
           return `${a.productCode}:${q}${pr}`;
         }),
         plan.soChanged ? `For ${so.soNo} Rev ${plan.so.revision} (customer PO ${plan.cpoNo} Rev ${plan.cpoRevision})` : `Re-priced for ${so.soNo} (customer PO ${plan.cpoNo})`,
-      ] },
+      ], before: poBefore ? snapshot(poBefore as unknown as Record<string, unknown>, poItemsBefore as unknown as Record<string, unknown>[]) : undefined },
       createdBy: userId,
     });
     amendedPos.push({ poNo: acts[0].poNo, revision });
@@ -648,3 +666,26 @@ async function cascadeToSibling(poId: string, userId: string, reason: string, de
 export type AmendmentRecord = {
   id: string; revision: number; reason: string; summary: string[]; createdAt: Date; createdByName: string | null;
 };
+
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+/** A kept snapshot's dates are text (JSON): back to Date for the PDFs. */
+export function reviveDates<T extends Record<string, unknown>>(o: T): T {
+  return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === "string" && ISO.test(v) ? new Date(v) : v])) as T;
+}
+
+/**
+ * A document as it was at revision `rev` (kept by the next amendment), for printing an old version.
+ * null: that's the current version, or it wasn't kept.
+ */
+export async function versionSnapshot(docType: DocType, docId: string, rev: number): Promise<DocSnapshot | null> {
+  try {
+    const [r] = await db
+      .select({ changes: documentAmendment.changes })
+      .from(documentAmendment)
+      .where(and(eq(documentAmendment.docType, docType), eq(documentAmendment.docId, docId), eq(documentAmendment.revision, rev + 1)))
+      .limit(1);
+    return (r?.changes?.before as DocSnapshot | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
