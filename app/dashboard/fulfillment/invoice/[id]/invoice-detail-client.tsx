@@ -415,6 +415,41 @@ export function InvoiceDetailClient({
                 </div>
               </div>
             )}
+            {/* who is credited with the case: every sales person (the main one first), and the application specialist */}
+            {(() => {
+              const list = Array.isArray(invoice.associateSalesPersons)
+                ? (invoice.associateSalesPersons as { name?: string }[]).map((p) => p?.name ?? "").filter(Boolean)
+                : [];
+              const salesPersons = [...new Set(invoice.salesPersonName ? [invoice.salesPersonName, ...list] : list)];
+              const specialist = invoice.applicationSpecialistName;
+              if (salesPersons.length === 0 && !specialist) return null;
+              return (
+                <div className="border-t border-border/50 pt-2.5 space-y-2">
+                  {salesPersons.length > 0 && (
+                    <div className="flex items-start gap-2">
+                      <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">{salesPersons.length > 1 ? "Sales persons" : "Sales person"}</p>
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          {salesPersons.map((name) => (
+                            <span key={name} className="inline-flex items-center rounded-md border border-border/60 bg-muted/50 px-1.5 py-0.5 text-xs">{name}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {specialist && (
+                    <div className="flex items-start gap-2">
+                      <UserIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-[10px] text-muted-foreground">Application specialist</p>
+                        <span className="mt-0.5 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400">{specialist}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {(invoice.salesOrderNo || invoice.deliveryOrderNo || invoice.customerPoNo) && (
               <div className="border-t border-border/50 pt-2.5 space-y-2">
                 {invoice.salesOrderNo && (
