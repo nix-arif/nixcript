@@ -156,3 +156,11 @@ export async function cascadeCategories(kind: ChainDoc, id: string, oldIds: stri
     await cascadeCategories(n.kind, n.id, n.cur.length ? n.cur : mappedOld, ids, depth + 1);
   }
 }
+
+/** Every category of these companies, for filter chips (in each company's own order). */
+export async function categoriesOfOrgs(orgIds: string[]): Promise<{ id: string; name: string; color: string | null }[]> {
+  if (orgIds.length === 0) return [];
+  return db.select({ id: documentCategory.id, name: documentCategory.name, color: documentCategory.color })
+    .from(documentCategory).where(inArray(documentCategory.organizationId, orgIds))
+    .orderBy(documentCategory.position, documentCategory.createdAt);
+}

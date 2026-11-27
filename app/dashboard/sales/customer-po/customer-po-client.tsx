@@ -29,8 +29,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CpoTrailHover } from "./cpo-trail-hover";
-import { CategoryChip } from "@/components/document-categories-card";
 import type { CategoryOption } from "@/server/document-category-chain";
+import { CpoCategoryFilter, CpoCategoryTags, CpoRecordCount, CpoStatCards, useCpoFilters } from "./cpo-list-filters";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -46,42 +46,10 @@ const STATUS: Record<string, { label: string; className: string }> = {
   cancelled: { label: "Cancelled", className: "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400" },
 };
 
-// The stat cards above the list, each also a filter
-type Bucket = "all" | "pendingSo" | "inProgress" | "fulfilled" | "draft" | "thisMonth";
-const isOpen = (p: CustomerPoListRow) => p.status !== "cancelled" && p.status !== "fulfilled" && p.status !== "draft";
-const inBucket = (p: CustomerPoListRow, b: Bucket, monthStart: number) => {
-  switch (b) {
-    case "all": return p.status !== "cancelled" && p.status !== "draft";
-    case "pendingSo": return isOpen(p) && !p.salesOrderId;
-    case "inProgress": return isOpen(p) && !!p.salesOrderId;
-    case "fulfilled": return p.status === "fulfilled";
-    case "draft": return p.status === "draft";
-    case "thisMonth": return p.status !== "cancelled" && p.status !== "draft" && new Date(p.receivedDate ?? p.createdAt).getTime() >= monthStart;
-  }
-};
-const BUCKETS: { key: Bucket; label: string; hint: string; tone?: string }[] = [
-  { key: "all", label: "Customer POs", hint: "Recorded, not cancelled" },
-  { key: "pendingSo", label: "Pending SO", hint: "No sales order yet", tone: "text-amber-600 dark:text-amber-400" },
-  { key: "inProgress", label: "In progress", hint: "Sales order raised, not fulfilled", tone: "text-blue-600 dark:text-blue-400" },
-  { key: "fulfilled", label: "Fulfilled", hint: "Delivered in full", tone: "text-green-600 dark:text-green-400" },
-  { key: "thisMonth", label: "This month", hint: "Received this month" },
-  { key: "draft", label: "Drafts", hint: "Not recorded yet", tone: "text-muted-foreground" },
-];
-// the value per currency (RM first), e.g. "RM 12,400.00 + USD 300.00"
-function valueText(rows: CustomerPoListRow[]): string {
-  const by = new Map<string, number>();
-  for (const r of rows) by.set(r.currency || "MYR", (by.get(r.currency || "MYR") ?? 0) + Number(r.amount ?? 0));
-  if (by.size === 0) return fmt(0);
-  return [...by.entries()].sort(([a], [b]) => (a === "MYR" ? -1 : b === "MYR" ? 1 : a.localeCompare(b)))
-    .map(([c, v]) => (c === "MYR" ? fmt(v) : `${c} ${v.toLocaleString("en-MY", { minimumFractionDigits: 2 })}`)).join(" + ");
-}
-
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS[status] ?? STATUS.received;
   return <span className={cn("text-[11px] font-medium rounded px-2 py-0.5", cfg.className)}>{cfg.label}</span>;
 }
-
-const catIds = (p: CustomerPoListRow) => (Array.isArray(p.categoryIds) ? (p.categoryIds as string[]) : []);
 
 export function CustomerPoClient({ initialPos, canCreateSo = false, categories = [] }: { initialPos: CustomerPoListRow[]; canCreateSo?: boolean; categories?: CategoryOption[] }) {
   const router = useRouter();
@@ -92,27 +60,16 @@ export function CustomerPoClient({ initialPos, canCreateSo = false, categories =
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const [bucket, setBucket] = useState<Bucket | null>(null);
-  // category filter: a CPO with any of the chosen categories ("none": no category at all)
-  const [cats, setCats] = useState<Set<string>>(new Set());
-  const catById = new Map(categories.map((c) => [c.id, c]));
-  const inCats = (p: CustomerPoListRow) => {
-    if (cats.size === 0) return true;
-    const ids = catIds(p).filter((id) => catById.has(id));
-    return ids.length === 0 ? cats.has("none") : ids.some((id) => cats.has(id));
-  };
-  const toggleCat = (id: string) => setCats((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const inScope = pos.filter(inCats); // what the stat cards count
-  const [monthStart] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); });
+  const f = useCpoFilters(pos, categories);
 
   const revs = useRevisions("cpo", pos.map((x) => x.id)); // amended: Rev N by the number
-  const filtered = inScope.filter((p) => {
-    if (bucket && !inBucket(p, bucket, monthStart)) return false;
+  const filtered = f.inScope.filter((p) => {
+    if (!f.inBucketNow(p)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = p.customerSnapshot as any;
     return (
-      catIds(p).some((id) => catById.get(id)?.name.toLowerCase().includes(s)) ||
+      f.searchCats(p, s) ||
       p.customerPoNo.toLowerCase().includes(s) ||
       [snap?.title, snap?.name].filter(Boolean).join(" ").toLowerCase().includes(s) ||
       snap?.organizationName?.toLowerCase().includes(s) ||
@@ -154,46 +111,8 @@ export function CustomerPoClient({ initialPos, canCreateSo = false, categories =
       />
 
       {/* Stat cards: each one filters the list (click again to show everything) */}
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {BUCKETS.map((b) => {
-          const rows = inScope.filter((p) => inBucket(p, b.key, monthStart));
-          const on = bucket === b.key;
-          return (
-            <button
-              key={b.key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => setBucket(on ? null : b.key)}
-              title={on ? "Show every customer PO" : `Show only: ${b.hint.toLowerCase()}`}
-              className={cn(
-                "rounded-xl border p-3 text-left transition-colors hover:bg-muted/30",
-                on ? "border-primary bg-primary/5" : "border-border",
-              )}
-            >
-              <div className="text-[11px] font-medium text-muted-foreground">{b.label}</div>
-              <div className={cn("text-xl font-semibold tabular-nums", rows.length > 0 && b.tone)}>{rows.length}</div>
-              <div className="truncate text-[11px] tabular-nums text-muted-foreground" title={valueText(rows)}>
-                {b.key === "draft" ? b.hint : valueText(rows)}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {categories.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] font-medium text-muted-foreground">Categories:</span>
-          {categories.map((c) => (
-            <CategoryChip key={c.id} option={c} selected={cats.has(c.id)} onClick={() => toggleCat(c.id)} />
-          ))}
-          <CategoryChip option={{ id: "none", name: "No category", color: "#94a3b8" }} selected={cats.has("none")} onClick={() => toggleCat("none")} />
-          {cats.size > 0 && (
-            <button type="button" onClick={() => setCats(new Set())} className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground">
-              clear
-            </button>
-          )}
-        </div>
-      )}
+      <CpoStatCards f={f} />
+      <CpoCategoryFilter f={f} />
 
       <div className="relative mb-4">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -210,21 +129,12 @@ export function CustomerPoClient({ initialPos, canCreateSo = false, categories =
         )}
       </div>
 
-      <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} record{filtered.length !== 1 ? "s" : ""}
-        {cats.size > 0 && <> · {[...cats].map((id) => (id === "none" ? "No category" : catById.get(id)?.name)).filter(Boolean).join(" or ")}</>}
-        {bucket && (
-          <>
-            {" "}· {BUCKETS.find((b) => b.key === bucket)?.label}{" "}
-            <button type="button" onClick={() => setBucket(null)} className="underline underline-offset-2 hover:text-foreground">show all</button>
-          </>
-        )}
-      </div>
+      <CpoRecordCount f={f} count={filtered.length} />
 
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
           <FileTextIcon className="w-8 h-8 mx-auto mb-3 opacity-30" />
-          <div className="text-sm font-medium mb-1">{bucket || search || cats.size > 0 ? "No customer POs match" : "No customer POs recorded"}</div>
+          <div className="text-sm font-medium mb-1">{f.anyActive || search ? "No customer POs match" : "No customer POs recorded"}</div>
           <div className="text-xs mb-4">Record the first customer purchase order</div>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => router.push("/dashboard/sales/customer-po/create")}>
             <PlusIcon className="w-3.5 h-3.5" /> Record customer PO
@@ -296,13 +206,7 @@ export function CustomerPoClient({ initialPos, canCreateSo = false, categories =
                           <Highlight text={snap.organizationName} query={search} />
                         </span>
                       )}
-                      {catIds(p).map((id) => catById.get(id)).filter((c): c is CategoryOption => !!c).map((c) => (
-                        <span key={c.id} className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium"
-                          style={{ backgroundColor: (c.color ?? "#6366f1") + "1f", color: c.color ?? "#6366f1" }}>
-                          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c.color ?? "#6366f1" }} />
-                          <Highlight text={c.name} query={search} />
-                        </span>
-                      ))}
+                      <CpoCategoryTags list={f.categoriesOf(p)} query={search} />
                       <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
                         {fmt(p.amount)} {p.currency !== "MYR" ? p.currency : ""}
                       </span>

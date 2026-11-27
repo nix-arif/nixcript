@@ -21,6 +21,8 @@ import {
   Link2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { CategoryOption } from "@/server/document-category-chain";
+import { CpoCategoryFilter, CpoCategoryTags, CpoRecordCount, CpoStatCards, useCpoFilters } from "../cpo-list-filters";
 
 const fmt = (v: string | number | null | undefined) =>
   `RM ${Number(v ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
@@ -46,9 +48,11 @@ interface Props {
   // "external": real customers' POs. "intercompany": CPOs auto-created when a
   // sibling org issued a PO to this one — listed on their own page.
   kind?: "external" | "intercompany";
+  /** Every company's categories (the filter chips go by name) */
+  categories?: CategoryOption[];
 }
 
-export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: Props) {
+export function CentralizedCustomerPoClient({ initialPos, kind = "external", categories = [] }: Props) {
   const isIc = kind === "intercompany";
   const router = useRouter();
   const [pos, setPos] = useState(initialPos);
@@ -61,9 +65,13 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: P
 
   const orgs = [...new Set(pos.map((p) => p.organizationName))].sort();
 
+  // the stat cards count the company chosen (and the categories chosen)
+  const inOrg = orgFilter ? pos.filter((p) => p.organizationName === orgFilter) : pos;
+  const f = useCpoFilters(inOrg, categories, true);
+
   const revs = useRevisions("cpo", pos.map((x) => x.id)); // amended: Rev N by the number
-  const filtered = pos.filter((p) => {
-    if (orgFilter && p.organizationName !== orgFilter) return false;
+  const filtered = f.inScope.filter((p) => {
+    if (!f.inBucketNow(p)) return false;
     if (!search) return true;
     const s = search.toLowerCase();
     const snap = p.customerSnapshot;
@@ -73,7 +81,8 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: P
       snap?.organizationName?.toLowerCase().includes(s) ||
       p.quotationNo?.toLowerCase().includes(s) ||
       p.salesOrderNo?.toLowerCase().includes(s) ||
-      p.organizationName.toLowerCase().includes(s)
+      p.organizationName.toLowerCase().includes(s) ||
+      f.searchCats(p, s)
     );
   });
 
@@ -105,13 +114,16 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: P
         }
       />
 
+      <CpoStatCards f={f} />
+      <CpoCategoryFilter f={f} />
+
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder={isIc ? "Search by PO no., ordering org, SO no., receiving org…" : "Search by PO no., customer, QT no., SO no., organization…"}
+            placeholder={isIc ? "Search by PO no., ordering org, SO no., receiving org, category…" : "Search by PO no., customer, QT no., SO no., organization, category…"}
             className="pl-9 h-9 text-sm"
           />
           {search && (
@@ -148,9 +160,7 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: P
         )}
       </div>
 
-      <div className="text-xs text-muted-foreground mb-3 tabular-nums">
-        {filtered.length} record{filtered.length !== 1 ? "s" : ""}
-      </div>
+      <CpoRecordCount f={f} count={filtered.length} />
 
       {filtered.length === 0 ? (
         <div className="border border-border rounded-xl py-16 text-center text-muted-foreground">
@@ -232,6 +242,7 @@ export function CentralizedCustomerPoClient({ initialPos, kind = "external" }: P
                           <Highlight text={snap.organizationName} query={search} />
                         </span>
                       )}
+                      <CpoCategoryTags list={f.categoriesOf(p)} query={search} />
                       <span className="text-[11px] font-semibold text-foreground ml-auto tabular-nums">
                         {fmt(p.amount)} {p.currency !== "MYR" ? p.currency : ""}
                       </span>
