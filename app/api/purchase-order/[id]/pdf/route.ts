@@ -1,4 +1,5 @@
 import { getPoForPrint } from "@/server/purchase-order";
+import { currentRevision } from "@/lib/amendment/customer-po";
 import { generatePurchaseOrderPdf, type PoPdfOptions } from "@/app/dashboard/procurement/purchase-order/[id]/print/generate-po-pdf";
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
@@ -53,7 +54,7 @@ export async function GET(req: Request, { params }: Props) {
     return new Response("PDF is only available for confirmed purchase orders", { status: 403 });
   }
 
-  const options: PoPdfOptions = { withImages };
+  const options: PoPdfOptions = { withImages, revision: await currentRevision("po", id) };
 
   if (withImages) {
     const itemImages: PoPdfOptions["itemImages"] = new Map();

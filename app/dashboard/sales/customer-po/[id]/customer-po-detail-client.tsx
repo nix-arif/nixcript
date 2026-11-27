@@ -10,6 +10,7 @@ import {
   LayersIcon, AlertTriangleIcon, RouteIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AmendmentHistory } from "@/components/amendment-history";
 import { cn } from "@/lib/utils";
 import type { CustomerPoTrackingData, CpoItemInput } from "@/server/customer-purchase-order";
 import { isNotAsSetLabel, NOT_AS_SET_ID, sourceQuotationNo } from "@/lib/customer-po/item-order";
@@ -101,6 +102,8 @@ export function CustomerPoDetailClient({
           )}
         </div>
       </div>
+
+      <AmendmentHistory docType="cpo" docId={cpo.id} />
 
       {/* ── Items ── */}
       {cpo.items && cpo.items.length > 0 && <ItemsSection items={cpo.items} currency={cpo.currency} quotations={cpo.quotationLinks ?? []} />}

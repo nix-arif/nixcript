@@ -31,6 +31,8 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { PO_TBC_PREFIX } from "@/lib/customer-po/po-number";
 import { findCpoNoClash, clashMessage } from "@/lib/customer-po/unique-no";
+import { planCustomerPoAmendment, recordCpoAmendment, applyAmendmentDownstream, nextRevision, type AmendmentPlan } from "@/lib/amendment/customer-po";
+import { revalidatePath } from "next/cache";
 const s3 = new S3Client({
   region: "auto",
   endpoint: process.env.R2_ENDPOINT!,
@@ -587,8 +589,8 @@ export async function getCustomerPoSoLock(cpoId: string): Promise<CpoSoLock | nu
   return cpo ? soLockFor(cpo) : null;
 }
 
-async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput, userId: string): Promise<CustomerPo> {
-  const lock = await soLockFor(existing);
+async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomerPoInput, userId: string, opts: { amending?: boolean } = {}): Promise<CustomerPo> {
+  const lock = opts.amending ? null : await soLockFor(existing);
   if (lock) {
     const changesMoney =
       input.items !== undefined ||
@@ -598,7 +600,7 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
       (input.overallDiscountPct !== undefined && input.overallDiscountPct !== existing.overallDiscountPct) ||
       (input.overallDiscountAmt !== undefined && input.overallDiscountAmt !== existing.overallDiscountAmt);
     if (changesMoney) {
-      throw new Error(`The lines, amount and discount can't be changed: sales order ${lock.soNo} made from this CPO is ${lock.status}. Recall the sales order first to amend them.`);
+      throw new Error(`The lines, amount and discount can't be changed: sales order ${lock.soNo} made from this CPO is ${lock.status}. Use Amend to change them.`);
     }
   }
   const wasDraft = existing.status === "draft";
@@ -658,6 +660,66 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
   // recorded now: tell the sales approvers, as if it had just been received
   if (wasDraft && !staysDraft && nextStatus !== "cancelled") await notifyNewCpo(existing.organizationId, userId, existing.id, newNo, row.customerSnapshot);
   return row;
+}
+
+// ── Amendment (its sales order is submitted or later) — see lib/amendment/customer-po.ts ──
+
+async function cpoForAmendment(id: string) {
+  const { orgId, userId } = await requireAccess("customer-po:update");
+  const [existing] = await db
+    .select()
+    .from(customerPurchaseOrder)
+    .where(and(eq(customerPurchaseOrder.id, id), eq(customerPurchaseOrder.organizationId, orgId)));
+  if (!existing) throw new Error("Customer PO not found");
+  return { existing, userId };
+}
+
+const amendedDiscount = (input: UpdateCustomerPoInput) =>
+  input.overallDiscountPct !== undefined || input.overallDiscountAmt !== undefined
+    ? { pct: input.overallDiscountPct ?? null, amt: input.overallDiscountAmt ?? null }
+    : undefined;
+
+/** What amending the CPO to these lines would do to its sales order and supplier POs. Nothing is saved. */
+export async function previewCustomerPoAmendment(input: UpdateCustomerPoInput): Promise<AmendmentPlan> {
+  const { existing } = await cpoForAmendment(input.id);
+  const work = await planCustomerPoAmendment(existing, (input.items ?? existing.items ?? []) as CpoItemInput[], amendedDiscount(input));
+  return work.plan;
+}
+
+/**
+ * Amends the CPO (a new revision), its sales order (changed in place, back for approval) and the
+ * chosen supplier POs (changed in place, new revision). Refused while the preview shows a blocker.
+ */
+export async function amendCustomerPo(
+  input: UpdateCustomerPoInput & { reason: string; amendPoIds: string[] },
+): Promise<{ cpoRevision: number; soNo: string; soRevision: number; amendedPos: { poNo: string; revision: number }[]; followUps: string[] }> {
+  const { reason, amendPoIds, ...update } = input;
+  if (!reason?.trim()) throw new Error("Give the reason for the amendment (e.g. the customer's amendment letter).");
+  const { existing, userId } = await cpoForAmendment(update.id);
+  const work = await planCustomerPoAmendment(existing, (update.items ?? existing.items ?? []) as CpoItemInput[], amendedDiscount(update));
+  if (work.plan.blockers.length > 0) throw new Error(work.plan.blockers.join(" "));
+  await nextRevision("cpo", existing.id); // the amendments table must be there before anything is changed
+
+  const row = await applyCustomerPoUpdate(existing, update, userId, { amending: true });
+  const cpoAmendmentId = await recordCpoAmendment(row, userId, reason.trim(), work.plan);
+  const down = await applyAmendmentDownstream(work, userId, reason.trim(), amendPoIds, cpoAmendmentId);
+
+  // the sales approvers: the SO is back for approval
+  const approvers = await getSoApprovers(existing.organizationId).catch(() => [] as string[]);
+  await Promise.all(approvers.filter((u) => u !== userId).map((u) => createNotification({
+    organizationId: existing.organizationId,
+    userId: u,
+    type: "so:submitted",
+    title: `SO ${work.so.soNo} amended (Rev ${down.soRevision}) — needs approval`,
+    body: `Customer PO ${row.customerPoNo} was amended: ${reason.trim()}`,
+    link: `/dashboard/sales/order/${work.so.id}`,
+  }).catch(() => {})));
+
+  revalidatePath(`/dashboard/sales/customer-po/${existing.id}`);
+  revalidatePath(`/dashboard/sales/order/${work.so.id}`);
+  revalidatePath("/dashboard/sales/order");
+  revalidatePath("/dashboard/procurement/purchase-order");
+  return { cpoRevision: work.plan.cpoRevision, soNo: work.so.soNo, soRevision: down.soRevision, amendedPos: down.amendedPos, followUps: work.plan.followUps };
 }
 
 // The CPO number is copied onto the documents made from the CPO (sales order, PR, internal PO, DO,

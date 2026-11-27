@@ -18,6 +18,8 @@ export interface PoPdfOptions {
    * Values may be JPEG or PNG — the caller must know which format.
    */
   itemImages?: Map<number, { bytes: Uint8Array; format: "jpg" | "png" }>;
+  /** The PO's amendment revision (lib/amendment): printed "Rev N" with the number, and the title says amendment */
+  revision?: number;
 }
 
 // ── A4 dimensions & margins ────────────────────────────────────────────────
@@ -57,7 +59,7 @@ function dashedLine(page: PDFPage, y: number, x1 = ML, x2 = W - MR) {
 }
 
 export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions = {}): Promise<Uint8Array> {
-  const { withImages = false, itemImages = new Map() } = options;
+  const { withImages = false, itemImages = new Map(), revision = 0 } = options;
 
   const {
     order: po, items,
@@ -68,7 +70,7 @@ export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions
     orgPdfTemplate, orgHeaderLayout, orgTableRowStyle, orgTableFontSize, orgNameSize,
   } = data;
 
-  const poNoDisplay = po.poNo ?? po.prNo ?? "";
+  const poNoDisplay = `${po.poNo ?? po.prNo ?? ""}${revision > 0 ? ` Rev ${revision}` : ""}`;
 
   const DEFAULT_ACCENT = rgb(0.05, 0.14, 0.30);
   const accent  = hexToRgb(orgBrandColor, DEFAULT_ACCENT);
@@ -336,7 +338,7 @@ export async function generatePurchaseOrderPdf(data: Data, options: PoPdfOptions
       curY = H - 5 - HEADER_BLOCK;
 
       // "PURCHASE ORDER" label
-      page.drawText("PURCHASE ORDER", {
+      page.drawText(revision > 0 ? `PURCHASE ORDER — AMENDMENT ${revision}` : "PURCHASE ORDER", {
         x: ML, y: curY + QL_BAND_H - 22,
         size: 16, font: fontB, color: accent,
       });

@@ -3592,6 +3592,31 @@ export const purchaseOrderItemRelations = relations(purchaseOrderItem, ({ one })
   }),
 }));
 
+/*
+   DOCUMENT AMENDMENT
+   One row per revision of a customer PO, sales order or supplier PO that was amended after it
+   was confirmed (Rev 1, Rev 2, …): why, what changed, by whom. The latest revision is the
+   document's revision number (0 when it has none). See lib/amendment/customer-po.ts.
+*/
+export const documentAmendment = pgTable(
+  "document_amendment",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").notNull().references(() => organization.id, { onDelete: "cascade" }),
+    docType: text("doc_type").notNull(), // "cpo" | "so" | "po"
+    docId: text("doc_id").notNull(),
+    docNo: text("doc_no"),
+    revision: integer("revision").notNull(),
+    reason: text("reason").notNull(),
+    // the customer PO amendment this came from (the same id on its SO and supplier PO rows)
+    sourceAmendmentId: text("source_amendment_id"),
+    changes: json("changes").$type<{ summary: string[] }>().notNull(),
+    createdBy: text("created_by").notNull().references(() => user.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("document_amendment_doc_idx").on(t.docType, t.docId)],
+);
+
 export const purchaseOrderCustomerPo = pgTable(
   "purchase_order_customer_po",
   {

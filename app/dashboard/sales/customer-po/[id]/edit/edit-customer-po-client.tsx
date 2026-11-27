@@ -19,6 +19,7 @@ import { getProductByCode } from "@/server/products";
 import { cn } from "@/lib/utils";
 import { AMOUNT_TONE, AmountCheckNote, DocTotalCheck, amountCheck, usePoDocumentTotal } from "../../amount-check";
 import { CpoDiscountPanel, useCpoDiscount } from "../../use-cpo-discount";
+import { AmendPanel } from "./amend-panel";
 import { overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
 import { useUnsavedUpload } from "../../use-unsaved-upload";
 import { sumLines, setTotal, bookSetPrices } from "@/lib/customer-po/set-price";
@@ -34,7 +35,7 @@ import {
   ArrowLeftIcon, SearchIcon, XIcon, PaperclipIcon,
   BuildingIcon, UserIcon, FileTextIcon, PlusIcon,
   PencilIcon, DatabaseIcon, LinkIcon,
-  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon, AlertTriangleIcon, LockIcon,
+  ChevronUpIcon, ChevronDownIcon, DownloadIcon, UploadIcon, AlertTriangleIcon, LockIcon, FilePenLineIcon,
 } from "lucide-react";
 
 type LinkedQuotation = {
@@ -113,7 +114,11 @@ export function EditCustomerPoClient({
   soLock?: CpoSoLock | null;
 }) {
   const router = useRouter();
-  const locked = !!soLock;
+  // Amend: a CPO locked by its SO is changed through an amendment (amend-panel.tsx)
+  const [amendMode, setAmendMode] = useState(false);
+  const locked = !!soLock && !amendMode;
+  // amending works on this organization's CPOs (not from the centralized view)
+  const canAmend = updateFn === updateCustomerPo;
   const snap   = cpo.customerSnapshot as any;
   const cpoAny = cpo as any;
   const backHref = detailHref ?? `/dashboard/sales/customer-po/${cpo.id}`;
@@ -825,6 +830,64 @@ export function EditCustomerPoClient({
   const [showDescErrors, setShowDescErrors] = useState(false);
 
   // asDraft (only for a draft): keep the changes, still not recorded. Without it a draft is recorded as a real Customer PO.
+  // The CPO as Save sends it. withMoney: with its lines, amount and discount (left out while its SO locks them).
+  function savePayload(asDraft: boolean, withMoney = !locked): Parameters<typeof updateFn>[0] {
+    const primary = linkedQuotations[0];
+    return {
+    id: cpo.id,
+    customerPoNo:    customerPoNo.trim(),
+    customerId:      primary?.customerId ?? cpo.customerId ?? undefined,
+    customerOrgMemberId: primary?.customerOrgMemberId ?? undefined,
+    quotationLinks:  withMoney && linkedQuotations.length > 0
+      ? linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo }))
+      : undefined,
+    // locked by its sales order: lines, amount and discount are left as they are
+    items:           withMoney && items.length > 0
+      ? (asDraft ? bookSetPrices(items) : bookSetPrices(items.filter((i) => i.included))).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
+          ...rest,
+          // a draft also keeps the lines that are switched off, so they can be switched on again later
+          _excluded:     asDraft && !included ? true : undefined,
+          rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
+          quotationNo:   _quotationNo || undefined,
+          originalCode:  rest._codeSource === "user" ? (_origCode?.trim() || undefined) : undefined,
+          cpoDescription: rest.cpoDescription?.trim() || undefined,
+          setCpoTitle:   rest.setGroupId && !isNotAsSetLabel(rest.setGroupLabel) ? (rest.setCpoTitle?.trim() || undefined) : undefined,
+          setGroupId:    rest.setGroupId    || undefined,
+          setGroupLabel: rest.setGroupLabel || undefined,
+          setQty:        rest.setQty        || undefined,
+          _codeSource:         rest._codeSource        || undefined,
+          _descriptionSource:  rest._descriptionSource || undefined,
+          _unitPriceSource:    rest._unitPriceSource   || undefined,
+          _qtySource:          rest._qtySource         || undefined,
+          _editedBy:           rest._editedBy          || undefined,
+        }))
+      : undefined,
+    ...(withMoney && {
+      amount,
+      currency,
+      ...discountForSave(cpoDisc.discountFor(items), items),
+    }),
+    // the new file, else the one it had; null when it was removed (the server then deletes the old file once saved)
+    documentKey:     pdfKey ?? existingDocKey ?? null,
+    salesPersonName: salesPersons[0]?.name || undefined,
+    associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined,
+    notes:           notes || undefined,
+    receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
+    deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
+    deliveryAddress: deliveryAddress.trim() || undefined,
+    status: asDraft ? "draft" : status,
+  };
+  }
+
+  // What the amendment saves (every line and amount), or why it can't be yet
+  function amendPayload(): ReturnType<typeof savePayload> | string {
+    if (!customerPoNo.trim()) return "Customer PO number is required";
+    if (items.filter((i) => i.included).length === 0) return "Keep at least one line on the customer PO";
+    const missing = itemsMissingCpoDescription(items);
+    if (missing.length > 0) { setShowDescErrors(true); return cpoDescriptionMessage(missing); }
+    return savePayload(false, true);
+  }
+
   async function handleSave(asDraft = false) {
     if (asDraft) {
       if (linkedQuotations.length === 0 && !customerPoNo.trim() && items.length === 0) {
@@ -860,51 +923,7 @@ export function EditCustomerPoClient({
     }
     setSaving(true);
     try {
-      const primary = linkedQuotations[0];
-      await updateFn({
-        id: cpo.id,
-        customerPoNo:    customerPoNo.trim(),
-        customerId:      primary?.customerId ?? cpo.customerId ?? undefined,
-        customerOrgMemberId: primary?.customerOrgMemberId ?? undefined,
-        quotationLinks:  !locked && linkedQuotations.length > 0
-          ? linkedQuotations.map((q) => ({ quotationId: q.id, quotationNo: q.quotationNo }))
-          : undefined,
-        // locked by its sales order: lines, amount and discount are left as they are
-        items:           !locked && items.length > 0
-          ? (asDraft ? bookSetPrices(items) : bookSetPrices(items.filter((i) => i.included))).map(({ _key, included, _quotationId, _quotationNo, _origCode, _origDescription, _origDescSource, _codeNotFound, ...rest }) => ({
-              ...rest,
-              // a draft also keeps the lines that are switched off, so they can be switched on again later
-              _excluded:     asDraft && !included ? true : undefined,
-              rowNo:         itemNumbers(items).get(_key) ?? rest.rowNo,
-              quotationNo:   _quotationNo || undefined,
-              originalCode:  rest._codeSource === "user" ? (_origCode?.trim() || undefined) : undefined,
-              cpoDescription: rest.cpoDescription?.trim() || undefined,
-              setCpoTitle:   rest.setGroupId && !isNotAsSetLabel(rest.setGroupLabel) ? (rest.setCpoTitle?.trim() || undefined) : undefined,
-              setGroupId:    rest.setGroupId    || undefined,
-              setGroupLabel: rest.setGroupLabel || undefined,
-              setQty:        rest.setQty        || undefined,
-              _codeSource:         rest._codeSource        || undefined,
-              _descriptionSource:  rest._descriptionSource || undefined,
-              _unitPriceSource:    rest._unitPriceSource   || undefined,
-              _qtySource:          rest._qtySource         || undefined,
-              _editedBy:           rest._editedBy          || undefined,
-            }))
-          : undefined,
-        ...(!locked && {
-          amount,
-          currency,
-          ...discountForSave(cpoDisc.discountFor(items), items),
-        }),
-        // the new file, else the one it had; null when it was removed (the server then deletes the old file once saved)
-        documentKey:     pdfKey ?? existingDocKey ?? null,
-        salesPersonName: salesPersons[0]?.name || undefined,
-        associateSalesPersons: salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined,
-        notes:           notes || undefined,
-        receivedDate:    receivedDate ? new Date(receivedDate) : undefined,
-        deliveryDate:    deliveryDate ? new Date(deliveryDate) : undefined,
-        deliveryAddress: deliveryAddress.trim() || undefined,
-        status: asDraft ? "draft" : status,
-      });
+      await updateFn(savePayload(asDraft));
       upload.markSaved(); // the new document belongs to the CPO now: not deleted when the form closes
       if (asDraft) {
         toast.success("Draft saved");
@@ -980,9 +999,16 @@ export function EditCustomerPoClient({
                 a change here wouldn&apos;t reach it, or what was bought for it.
               </p>
               <p className="text-xs">
-                The PO number, document, dates, delivery address, sales person and notes can still be changed. If the customer has amended the order,
-                recall <span className="font-mono">{soLock.soNo}</span> first (recall or cancel its PRs and supplier POs before that), then amend both.
+                The PO number, document, dates, delivery address, sales person and notes can still be changed here.
+                If the customer has amended the order, amend it: the sales order and the supplier POs not shipped yet are updated with it.
               </p>
+              {canAmend && !amendMode && (
+                <Button type="button" size="sm" variant="outline" className="mt-1 h-7 gap-1.5 border-amber-400 bg-white text-amber-900 hover:bg-amber-100 dark:bg-transparent dark:text-amber-200"
+                  onClick={() => setAmendMode(true)}>
+                  <FilePenLineIcon className="h-3.5 w-3.5" /> Amend
+                </Button>
+              )}
+              {amendMode && <p className="text-xs font-semibold">Amending: change the lines below, then preview and apply at the bottom.</p>}
             </div>
           </div>
         )}
@@ -1635,6 +1661,16 @@ export function EditCustomerPoClient({
           />
         </div>
 
+        {amendMode && soLock ? (
+          <div className="pb-8">
+            <AmendPanel
+              payload={amendPayload}
+              payloadKey={JSON.stringify(savePayload(false, true))}
+              onCancel={() => { setAmendMode(false); router.refresh(); }}
+              onDone={() => { router.push(backHref); router.refresh(); }}
+            />
+          </div>
+        ) : (
         <div className="flex gap-3 pb-8">
           <Button onClick={() => handleSave(false)} disabled={saving || pdfUploading}>
             {saving ? "Saving…" : isDraft ? "Record customer PO" : "Save changes"}
@@ -1648,6 +1684,7 @@ export function EditCustomerPoClient({
             Cancel
           </Button>
         </div>
+        )}
       </div>
     </div>
   );

@@ -1,0 +1,60 @@
+"use client";
+
+// A document's amendments (Rev 1, Rev 2…): when, by whom, why and what changed.
+// Shown on the customer PO, sales order and supplier PO pages; nothing when it was never amended.
+
+import { useEffect, useState } from "react";
+import { FilePenLineIcon } from "lucide-react";
+import { getDocumentAmendments } from "@/server/amendment";
+import type { AmendmentRecord, DocType } from "@/lib/amendment/customer-po";
+
+export function AmendmentHistory({
+  docType,
+  docId,
+  onRevision,
+}: {
+  docType: DocType;
+  docId: string;
+  /** The document's current revision once loaded (0: never amended) */
+  onRevision?: (revision: number) => void;
+}) {
+  const [rows, setRows] = useState<AmendmentRecord[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    getDocumentAmendments(docType, docId)
+      .then((r) => { if (!live) return; setRows(r); onRevision?.(r[0]?.revision ?? 0); })
+      .catch(() => { if (live) setRows([]); });
+    return () => { live = false; };
+    // onRevision is a callback from the page: loading once per document is enough
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docType, docId]);
+
+  if (!rows || rows.length === 0) return null;
+  return (
+    <section className="border border-border rounded-xl p-4 space-y-3">
+      <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <FilePenLineIcon className="h-4 w-4 text-amber-600" /> Amendments
+        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Rev {rows[0].revision}</span>
+      </h2>
+      <ol className="space-y-3">
+        {rows.map((r) => (
+          <li key={r.id} className="text-xs">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-semibold">Rev {r.revision}</span>
+              <span className="text-muted-foreground">
+                {new Date(r.createdAt).toLocaleString("en-MY", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                {r.createdByName ? ` · ${r.createdByName}` : ""}
+              </span>
+            </div>
+            <p className="mt-0.5">{r.reason}</p>
+            {r.summary.length > 0 && (
+              <ul className="mt-1 list-disc pl-4 text-muted-foreground">
+                {r.summary.map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
