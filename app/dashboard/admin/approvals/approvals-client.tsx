@@ -15,15 +15,17 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ShieldCheckIcon, ChevronDownIcon, XIcon, PlusIcon, CrownIcon, BuildingIcon } from "lucide-react";
 import type { ApprovalMember, CrossOrgApprovalMember } from "@/server/approvals";
-import type { ApprovalModule } from "@/lib/approvals/constants";
+import { OPTIONAL_APPROVAL_KEYS, type ApprovalModule } from "@/lib/approvals/constants";
 import { setApprovalPermission, setCrossOrgApprovalPermission } from "@/server/approvals";
-import { setSelfActionAllowed } from "@/server/approval-settings";
+import { setApprovalRequired, setSelfActionAllowed } from "@/server/approval-settings";
 
 interface Props {
   members: ApprovalMember[];
   crossOrgMembers: CrossOrgApprovalMember[];
   modules: readonly ApprovalModule[];
   selfActionSettings: Record<string, boolean>;
+  /** { approve key: needs approval } for the documents whose approval can be switched off */
+  approvalRequired: Record<string, boolean>;
 }
 
 function initials(name: string) {
@@ -36,7 +38,7 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionSettings }: Props) {
+export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionSettings, approvalRequired }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<string | null>(null); // "userId:permKey" or "self:permKey" or "userId:orgId:permKey"
@@ -59,6 +61,20 @@ export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionS
     setPending(key);
     try {
       await setCrossOrgApprovalPermission(userId, orgId, permKey, !currentAllowed);
+      startTransition(() => router.refresh());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to update");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function handleRequiredToggle(permKey: string, currentRequired: boolean) {
+    const key = `required:${permKey}`;
+    setPending(key);
+    try {
+      await setApprovalRequired(permKey, !currentRequired);
+      toast.success(currentRequired ? "No approval needed: submitting confirms it at once" : "Approval needed again");
       startTransition(() => router.refresh());
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to update");
@@ -100,8 +116,33 @@ export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionS
         <div key={mod.id} className="rounded-lg border border-border overflow-hidden">
           {/* Module header */}
           <div className="px-5 py-3.5 bg-muted/40 border-b border-border">
-            <p className="text-sm font-semibold">{mod.title}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{mod.description}</p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">{mod.title}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{mod.description}</p>
+              </div>
+              {/* does the document need approval at all (only where it can be switched off) */}
+              {(() => {
+                const key = mod.permissions.map((p) => p.key).find((k) => k in OPTIONAL_APPROVAL_KEYS);
+                if (!key) return <span className="shrink-0 text-[11px] text-muted-foreground">Approval always required</span>;
+                const required = approvalRequired[key] !== false;
+                return (
+                  <label className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs font-medium">Needs approval</span>
+                    <Switch checked={required} disabled={pending === `required:${key}`} onCheckedChange={() => handleRequiredToggle(key, required)} />
+                  </label>
+                );
+              })()}
+            </div>
+            {(() => {
+              const key = mod.permissions.map((p) => p.key).find((k) => k in OPTIONAL_APPROVAL_KEYS);
+              if (!key || approvalRequired[key] !== false) return null;
+              return (
+                <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                  {OPTIONAL_APPROVAL_KEYS[key]} The people below can still recall it (and return one submitted before the switch).
+                </p>
+              );
+            })()}
           </div>
 
           <div className="divide-y divide-border/60">

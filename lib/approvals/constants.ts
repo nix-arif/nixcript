@@ -88,6 +88,13 @@ export const APPROVAL_MODULES = [
 
 export type ApprovalModule = typeof APPROVAL_MODULES[number];
 
+// The approvals a company can switch off (Approvals page → "Needs approval"): submitting the document
+// then confirms it at once. What it does instead, per key, for the page to explain it.
+export const OPTIONAL_APPROVAL_KEYS: Record<string, string> = {
+  "sales-order:approve": "Submitting a sales order confirms it at once: it gets its number and its stock is reserved. An amended order is confirmed again straight away.",
+  "purchase-requisition:approve": "Submitting a PR approves it at once: it gets its number and supplier POs can be raised from it.",
+};
+
 // Whether a given approval key allows the record owner to act on their own
 // submission, when no per-org override exists in the approval_setting
 // table. Preserves each workflow's existing behavior: the 3 HR workflows

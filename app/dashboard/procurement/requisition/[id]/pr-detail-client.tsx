@@ -1,5 +1,6 @@
 "use client";
 
+import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
 import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { DocRevBadge, AmendedAfterNote } from "@/components/amendment-history";
 import { DocumentCategoriesCard } from "@/components/document-categories-card";
@@ -313,10 +314,13 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
     try { await fn(); router.refresh(); } catch (e: any) { toast.error(e.message); } finally { setActioning(null); }
   }
 
+  // the company may not need PRs approved (Approvals page): Submit then approves it
+  const prNeedsApproval = useApprovalRequired("purchase-requisition:approve");
+
   async function handleSubmit() {
     await act("submit", async () => {
       await submitPurchaseRequisition(pr.id);
-      toast.success("Submitted for approval");
+      toast.success(prNeedsApproval ? "Submitted for approval" : "Submitted and approved: supplier POs can be raised from it");
     });
   }
 
@@ -502,7 +506,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
             )}
             {canSubmit && !editing && (
               <Button size="sm" className="gap-1.5" onClick={handleSubmit} disabled={actioning === "submit"}>
-                <SendIcon className="w-3.5 h-3.5" /> {actioning === "submit" ? "Submitting…" : "Submit for Approval"}
+                <SendIcon className="w-3.5 h-3.5" /> {actioning === "submit" ? "Submitting…" : prNeedsApproval ? "Submit for Approval" : "Submit"}
               </Button>
             )}
             {canApprove && !editing && (

@@ -452,6 +452,9 @@ export const approvalSetting = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     permissionKey: text("permission_key").notNull(), // e.g. "claim:approve"
     selfActionAllowed: boolean("self_action_allowed").notNull(),
+    // Does the document need approval at all (only the keys in OPTIONAL_APPROVAL_KEYS)? null: the default
+    // (yes). false: submitting it confirms it at once, as the submitter (lib/approvals/required.ts)
+    approvalRequired: boolean("approval_required"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

@@ -1,5 +1,6 @@
 "use client";
 
+import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
@@ -220,6 +221,9 @@ export function SalesOrderDetailClient({
     }
   }
 
+  // the company may not need SOs approved (Approvals page): Submit then confirms it
+  const soNeedsApproval = useApprovalRequired("sales-order:approve");
+
   async function handleSubmit() {
     if (showSourcing) {
       const missingSourcing = order.items.find((i) => (i.description || i.productCode) && !i.sourcingType);
@@ -238,7 +242,7 @@ export function SalesOrderDetailClient({
     setActioning("submit");
     try {
       await submitSalesOrder(order.id);
-      toast.success("Sales order sent for approval");
+      toast.success(soNeedsApproval ? "Sales order sent for approval" : "Sales order confirmed: it has its number and its stock is reserved");
       router.refresh();
     } catch (e: any) {
       toast.error(e.message);
@@ -1010,7 +1014,7 @@ export function SalesOrderDetailClient({
                   disabled={actioning !== null}
                 >
                   <SendIcon className="w-3.5 h-3.5" />
-                  {actioning === "submit" ? "Submitting…" : "Submit for approval"}
+                  {actioning === "submit" ? (soNeedsApproval ? "Submitting…" : "Confirming…") : (soNeedsApproval ? "Submit for approval" : "Confirm order")}
                 </Button>
               )}
               {/* Manager: download PDF preview for submitted SO */}

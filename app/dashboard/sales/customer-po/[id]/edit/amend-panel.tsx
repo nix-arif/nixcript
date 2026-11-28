@@ -64,7 +64,7 @@ export function AmendPanel({
       const poText = r.amendedPos.map((x) => `${x.poNo} Rev ${x.revision}`).join(", ");
       toast.success(plan?.soChanged === false
         ? `Re-priced: ${poText || "no supplier PO changed"}.`
-        : `Amended: customer PO Rev ${r.cpoRevision}, ${r.soNo} Rev ${r.soRevision} (back for approval)${poText ? `, ${poText}` : ""}.`, { duration: 10000 });
+        : `Amended: customer PO Rev ${r.cpoRevision}, ${r.soNo} Rev ${r.soRevision} (${r.soConfirmed ? "confirmed again" : "back for approval"})${poText ? `, ${poText}` : ""}.`, { duration: 10000 });
       if (r.raisedPrNo) toast.info(`Draft PR ${r.raisedPrNo} raised for the extra quantities: review and submit it.`, { duration: 15000 });
       if (r.chain.length > 0) toast.info(`Also updated: ${r.chain.join(" · ")}`, { duration: 15000 });
       if (r.followUps.length > 0) toast.warning(`Still to do: ${r.followUps.join(" ")}`, { duration: 20000 });

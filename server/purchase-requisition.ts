@@ -1,5 +1,6 @@
 "use server";
 
+import { isApprovalRequired } from "@/lib/approvals/required";
 import { discardDraftPosOfPr, posOfPr } from "@/lib/purchase-order/draft-pos";
 import { lastPurchasePrices } from "@/lib/procurement/last-price";
 import { cpoCategories, mapCategoriesToOrg, resolveCategories, soCategories } from "@/lib/document-category/inherit";
@@ -530,13 +531,22 @@ export async function recallPurchaseRequisition(id: string): Promise<ActionResul
 }
 
 export async function submitPurchaseRequisition(id: string): Promise<void> {
-  const { orgId } = await requireAccess("purchase-requisition:create");
+  const { orgId, userId } = await requireAccess("purchase-requisition:create");
   const [existing] = await db
     .select()
     .from(purchaseRequisition)
     .where(and(eq(purchaseRequisition.id, id), eq(purchaseRequisition.organizationId, orgId)));
   if (!existing) throw new Error("Purchase requisition not found");
   if (existing.status !== "draft") throw new Error("Only draft requisitions can be submitted");
+  // the company doesn't need PRs approved (Approvals page): submitting approves it, as the submitter
+  if (!(await isApprovalRequired(orgId, "purchase-requisition:approve"))) {
+    const prNo = isDraftRef(existing.prNo) ? await generatePrNo(orgId) : existing.prNo;
+    await db.update(purchaseRequisition).set({ status: "approved", approvedBy: userId, approvedAt: new Date(), prNo }).where(eq(purchaseRequisition.id, id));
+    revalidatePath(`/dashboard/procurement/requisition/${id}`);
+    revalidatePath("/dashboard/procurement/requisition");
+    revalidatePath("/dashboard/procurement/purchase-order"); // the PRs ready for a supplier PO
+    return;
+  }
   await db.update(purchaseRequisition).set({ status: "submitted" }).where(eq(purchaseRequisition.id, id));
   await notifyUsersWithPermission(orgId, "purchase-requisition:approve", {
     type: "purchase-requisition:submitted",

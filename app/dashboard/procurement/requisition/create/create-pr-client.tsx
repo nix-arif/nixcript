@@ -1,5 +1,6 @@
 "use client";
 
+import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -300,6 +301,8 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
   const [linkedSoId, setLinkedSoId] = useState<string | undefined>(initialSoId);
   const [linkedSoNo, setLinkedSoNo] = useState<string | undefined>();
   const [savingMode, setSavingMode] = useState<"draft" | "submit" | null>(null);
+  // the company may not need PRs approved (Approvals page): submitting then approves it
+  const prNeedsApproval = useApprovalRequired("purchase-requisition:approve");
   const [loadingSo, setLoadingSo] = useState(false);
   const [togglingExclude, setTogglingExclude] = useState<string | null>(null);
   const [prType, setPrType]       = useState<"customer_order" | "sample_demo">("customer_order");
@@ -617,7 +620,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
         await submitPurchaseRequisition(pr.id);
       }
       committedRef.current = true;
-      toast.success(submit ? "Purchase requisition submitted for approval" : "Purchase requisition saved as draft");
+      toast.success(submit ? (prNeedsApproval ? "Purchase requisition submitted for approval" : "Purchase requisition submitted and approved") : "Purchase requisition saved as draft");
       // the saved PR's own page (where a draft is edited); replaces the create
       // step so Back doesn't return to an empty form
       router.replace(`/dashboard/procurement/requisition/${pr.id}`);
@@ -652,7 +655,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
               {savingMode === "draft" ? "Saving…" : "Save as Draft"}
             </Button>
             <Button size="sm" onClick={() => handleSave(true)} disabled={savingMode !== null}>
-              {savingMode === "submit" ? "Submitting…" : "Submit for Approval"}
+              {savingMode === "submit" ? "Submitting…" : prNeedsApproval ? "Submit for Approval" : "Submit"}
             </Button>
           </div>
         }
@@ -1137,7 +1140,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
           {savingMode === "draft" ? "Saving…" : "Save as Draft"}
         </Button>
         <Button size="sm" onClick={() => handleSave(true)} disabled={savingMode !== null}>
-          {savingMode === "submit" ? "Submitting…" : "Submit for Approval"}
+          {savingMode === "submit" ? "Submitting…" : prNeedsApproval ? "Submit for Approval" : "Submit"}
         </Button>
       </div>
     </div>

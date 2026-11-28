@@ -1,5 +1,6 @@
 "use client";
 
+import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect, useId } from "react";
 import { useRouter } from "next/navigation";
@@ -1528,13 +1529,16 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     }
   }
 
+  // the company may not need SOs approved (Approvals page): submitting then confirms it
+  const soNeedsApproval = useApprovalRequired("sales-order:approve");
+
   async function handleSaveAndSubmit() {
     setSaving(true);
     try {
       const so = await buildAndCreate(true);
       if (!so) return;
       await submitSalesOrder(so.id);
-      toast.success("Sales order created and submitted for approval");
+      toast.success(soNeedsApproval ? "Sales order created and submitted for approval" : "Sales order created and confirmed");
       router.push(cpo ? `/dashboard/sales/customer-po/${cpo.id}` : "/dashboard/sales/order");
     } catch (e: any) {
       toast.error(e.message);
@@ -3186,7 +3190,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
           <Button onClick={handleSaveAndSubmit} disabled={saving} className="gap-2">
-            {saving ? "Creating…" : "Create & Submit"}
+            {saving ? "Creating…" : soNeedsApproval ? "Create & Submit" : "Create & Confirm"}
           </Button>
           <Button variant="outline" onClick={handleSave} disabled={saving}>
             Save as Draft

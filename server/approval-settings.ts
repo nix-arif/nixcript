@@ -3,7 +3,8 @@
 import { db } from "@/db";
 import { approvalSetting, member } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
-import { APPROVAL_MODULES, DEFAULT_SELF_ACTION_ALLOWED } from "@/lib/approvals/constants";
+import { APPROVAL_MODULES, DEFAULT_SELF_ACTION_ALLOWED, OPTIONAL_APPROVAL_KEYS } from "@/lib/approvals/constants";
+import { isApprovalRequired } from "@/lib/approvals/required";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { revalidatePath } from "next/cache";
@@ -68,4 +69,45 @@ export async function isSelfActionAllowed(orgId: string, permissionKey: string):
     .limit(1);
   if (row) return row.selfActionAllowed;
   return DEFAULT_SELF_ACTION_ALLOWED[permissionKey] ?? false;
+}
+
+// ── Does a document need approval at all (OPTIONAL_APPROVAL_KEYS) ───────────────────────────────
+
+/** { permission key: needs approval } for the keys that can be switched off (the Approvals page) */
+export async function getApprovalRequiredSettings(): Promise<Record<string, boolean>> {
+  const { orgId } = await requireOwnerOrAdmin();
+  const keys = Object.keys(OPTIONAL_APPROVAL_KEYS);
+  const rows = await db
+    .select({ permissionKey: approvalSetting.permissionKey, required: approvalSetting.approvalRequired })
+    .from(approvalSetting)
+    .where(and(eq(approvalSetting.organizationId, orgId), inArray(approvalSetting.permissionKey, keys)));
+  const out: Record<string, boolean> = {};
+  for (const k of keys) out[k] = rows.find((r) => r.permissionKey === k)?.required ?? true;
+  return out;
+}
+
+export async function setApprovalRequired(permissionKey: string, required: boolean): Promise<void> {
+  const { orgId } = await requireOwnerOrAdmin();
+  if (!(permissionKey in OPTIONAL_APPROVAL_KEYS)) throw new Error("This approval can't be switched off");
+  await db
+    .insert(approvalSetting)
+    .values({
+      id: nanoid(), organizationId: orgId, permissionKey,
+      // a new row keeps the self-approval default as it was
+      selfActionAllowed: DEFAULT_SELF_ACTION_ALLOWED[permissionKey] ?? false,
+      approvalRequired: required,
+    })
+    .onConflictDoUpdate({
+      target: [approvalSetting.organizationId, approvalSetting.permissionKey],
+      set: { approvalRequired: required },
+    });
+  revalidatePath("/dashboard/admin/approvals");
+}
+
+/** For the forms (their Submit button says Confirm when no approval is needed): the active company's setting */
+export async function approvalRequiredFor(permissionKey: string): Promise<boolean> {
+  const session = await getCachedSession();
+  const orgId = session?.session?.activeOrganizationId;
+  if (!orgId) return true;
+  return isApprovalRequired(orgId, permissionKey);
 }

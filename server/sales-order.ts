@@ -1,5 +1,6 @@
 "use server";
 
+import { isApprovalRequired } from "@/lib/approvals/required";
 import { cascadeCategories, cpoCategories, mapCategoriesToOrg, poCategories, quotationCategories, resolveCategories } from "@/lib/document-category/inherit";
 import { fillSalesOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
@@ -1338,6 +1339,12 @@ export async function submitSalesOrder(id: string): Promise<void> {
     .set({ status: "submitted", submittedBy: userId, submittedAt: new Date() })
     .where(eq(salesOrder.id, id));
 
+  // the company doesn't need SOs approved (Approvals page): submitting confirms it, as the submitter
+  if (!(await isApprovalRequired(orgId, "sales-order:approve"))) {
+    await confirmSubmittedSo(orgId, userId, session.user.name, so, true);
+    return;
+  }
+
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
 
@@ -1397,6 +1404,15 @@ export async function approveSalesOrder(id: string): Promise<void> {
   if (so.status !== "submitted") throw new Error("Only submitted orders can be approved");
   await assertSelfActionAllowed(orgId, "sales-order:approve", so.createdBy, userId, "approve");
 
+  await confirmSubmittedSo(orgId, userId, session.user.name, so, false);
+}
+
+type SubmittedSo = { id: string; soNo: string; customerSnapshot: unknown; grandTotal: string | null; createdBy: string };
+
+// submitted → confirmed: its number, the stock reserved, replenishment checked, its creator told. By the
+// approver, or — when the company doesn't need SOs approved (Approvals page) — as the submitter (auto).
+async function confirmSubmittedSo(orgId: string, userId: string, actorName: string, so: SubmittedSo, auto: boolean): Promise<string> {
+  const id = so.id;
   await db.update(salesOrder).set({ status: "confirmed", approvedBy: userId, approvedAt: new Date() }).where(eq(salesOrder.id, id));
   const soNo = await assignSoNumber(orgId, id, so.soNo);
 
@@ -1416,23 +1432,41 @@ export async function approveSalesOrder(id: string): Promise<void> {
   revalidatePath(`/dashboard/sales/order/${id}`);
   revalidatePath("/dashboard/sales/order");
 
+  // confirmed by its own creator (no approval needed): nobody to tell
+  if (auto && so.createdBy === userId) return soNo;
   const snap = so.customerSnapshot as any;
   const customerName = snap ? [snap.title, snap.name].filter(Boolean).join(" ") : undefined;
-  const actorName = session.user.name;
 
   notifyAndEmail({
     orgId,
     recipientUserIds: [so.createdBy],
     type: "so:approved",
     emailType: "approved",
-    title: `SO ${soNo} approved`,
-    body: `Your sales order ${soNo} has been approved by ${actorName}.`,
+    title: auto ? `SO ${soNo} confirmed` : `SO ${soNo} approved`,
+    body: auto ? `Your sales order ${soNo} was confirmed by ${actorName}.` : `Your sales order ${soNo} has been approved by ${actorName}.`,
     soNo,
     soId: so.id,
     customerName,
     grandTotal: so.grandTotal ?? undefined,
     actorName,
   }).catch(console.error);
+  return soNo;
+}
+
+/**
+ * A submitted SO confirmed at once when the company doesn't need SOs approved (an amended SO comes back
+ * submitted). Does nothing when approval is needed. Returns whether it was confirmed.
+ */
+export async function confirmSalesOrderIfNoApproval(id: string): Promise<boolean> {
+  const { orgId, userId, session } = await requireAccess("sales-order:update");
+  if (await isApprovalRequired(orgId, "sales-order:approve")) return false;
+  const [so] = await db
+    .select({ id: salesOrder.id, soNo: salesOrder.soNo, status: salesOrder.status, customerSnapshot: salesOrder.customerSnapshot, grandTotal: salesOrder.grandTotal, createdBy: salesOrder.createdBy })
+    .from(salesOrder)
+    .where(and(eq(salesOrder.id, id), eq(salesOrder.organizationId, orgId)));
+  if (!so || so.status !== "submitted") return false;
+  await confirmSubmittedSo(orgId, userId, session.user.name, so, true);
+  return true;
 }
 
 // ── Reject (submitted → draft) ────────────────────────────────────────────

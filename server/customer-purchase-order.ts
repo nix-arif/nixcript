@@ -1,5 +1,6 @@
 "use server";
 
+import { confirmSalesOrderIfNoApproval } from "@/server/sales-order";
 import { cascadeCategories, mapCategoriesToOrg, quotationCategories, resolveCategories } from "@/lib/document-category/inherit";
 import { db } from "@/db";
 import {
@@ -722,7 +723,7 @@ export async function previewCustomerPoAmendment(input: UpdateCustomerPoInput): 
  */
 export async function amendCustomerPo(
   input: UpdateCustomerPoInput & { reason: string; amendPoIds: string[] },
-): Promise<{ cpoRevision: number; soNo: string; soRevision: number; amendedPos: { poNo: string; revision: number }[]; chain: string[]; followUps: string[]; raisedPrNo: string | null }> {
+): Promise<{ cpoRevision: number; soNo: string; soRevision: number; soConfirmed: boolean; amendedPos: { poNo: string; revision: number }[]; chain: string[]; followUps: string[]; raisedPrNo: string | null }> {
   const { reason, amendPoIds, ...update } = input;
   if (!reason?.trim()) throw new Error("Give the reason for the amendment (e.g. the customer's amendment letter).");
   const { existing, userId } = await cpoForAmendment(update.id);
@@ -735,9 +736,12 @@ export async function amendCustomerPo(
   const cpoAmendmentId = work.plan.soChanged ? await recordCpoAmendment(existing, userId, reason.trim(), work.plan, row.customerPoNo) : nanoid();
   const down = await applyAmendmentDownstream(work, userId, reason.trim(), amendPoIds, cpoAmendmentId);
 
+  // the company doesn't need SOs approved (Approvals page): the amended SO is confirmed again at once
+  const soConfirmed = work.plan.soChanged ? await confirmSalesOrderIfNoApproval(work.so.id).catch(() => false) : false;
+
   // the sales approvers: the SO is back for approval
   const approvers = await getSoApprovers(existing.organizationId).catch(() => [] as string[]);
-  if (work.plan.soChanged) await Promise.all(approvers.filter((u) => u !== userId).map((u) => createNotification({
+  if (work.plan.soChanged && !soConfirmed) await Promise.all(approvers.filter((u) => u !== userId).map((u) => createNotification({
     organizationId: existing.organizationId,
     userId: u,
     type: "so:submitted",
@@ -751,7 +755,7 @@ export async function amendCustomerPo(
   revalidatePath("/dashboard/sales/order");
   revalidatePath("/dashboard/procurement/purchase-order");
   revalidatePath("/dashboard/procurement/requisition");
-  return { cpoRevision: work.plan.soChanged ? work.plan.cpoRevision : work.plan.cpoRevision - 1, soNo: work.so.soNo, soRevision: down.soRevision, amendedPos: down.amendedPos, chain: down.chain, followUps: work.plan.followUps, raisedPrNo: down.raisedPrNo };
+  return { cpoRevision: work.plan.soChanged ? work.plan.cpoRevision : work.plan.cpoRevision - 1, soNo: work.so.soNo, soRevision: down.soRevision, soConfirmed, amendedPos: down.amendedPos, chain: down.chain, followUps: work.plan.followUps, raisedPrNo: down.raisedPrNo };
 }
 
 // The CPO number is copied onto the documents made from the CPO (sales order, PR, internal PO, DO,
