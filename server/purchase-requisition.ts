@@ -1,5 +1,6 @@
 "use server";
 
+import { isSelfActionAllowed } from "@/server/approval-settings";
 import { isApprovalRequired } from "@/lib/approvals/required";
 import { discardDraftPosOfPr, posOfPr } from "@/lib/purchase-order/draft-pos";
 import { lastPurchasePrices } from "@/lib/procurement/last-price";
@@ -457,13 +458,17 @@ type ActionResult = { ok: true } | { ok: false; error: string };
 // rules first, then what was raised from it. Shared by the actions below and
 // the fulfilment trail, so the two never disagree.
 export async function purchaseRequisitionBlockers(prId: string): Promise<{ recall: string | null; cancel: string | null; delete: string | null; drafts: string[] } | null> {
-  const { orgId } = await requireAccess("purchase-requisition:read");
+  const { orgId, userId } = await requireAccess("purchase-requisition:read");
   const [pr] = await db
-    .select({ prNo: purchaseRequisition.prNo, status: purchaseRequisition.status })
+    .select({ prNo: purchaseRequisition.prNo, status: purchaseRequisition.status, requestedBy: purchaseRequisition.requestedBy })
     .from(purchaseRequisition)
     .where(and(eq(purchaseRequisition.id, prId), eq(purchaseRequisition.organizationId, orgId)));
   if (!pr) return null;
-  return prBlockers(orgId, prId, pr);
+  const b = await prBlockers(orgId, prId, pr);
+  // the person who raised it can't recall it while self-approval is off (Approvals page)
+  if (!b.recall && pr.requestedBy === userId && !(await isSelfActionAllowed(orgId, "purchase-requisition:approve")))
+    b.recall = "you can't recall your own requisition (self-approval is off on the Approvals page)";
+  return b;
 }
 
 async function prBlockers(orgId: string, prId: string, pr: { prNo: string; status: string }) {
@@ -473,8 +478,8 @@ async function prBlockers(orgId: string, prId: string, pr: { prNo: string; statu
   const any = [...issued, ...cancelled, ...drafts].map((p) => `PO ${p.poNo ?? "(unnumbered)"}${p.status === "cancelled" ? " (cancelled)" : ""}`);
   const liveMsg = (verb: string) => `Can't ${verb} ${pr.prNo} — supplier POs issued from it are still active: ${live.join(", ")}. Cancel those first.`;
   return {
-    recall: pr.status !== "approved" ? `Only an approved requisition can be recalled (this one is ${pr.status})`
-      : live.length > 0 ? liveMsg("recall") : null,
+    recall: (pr.status !== "approved" ? `Only an approved requisition can be recalled (this one is ${pr.status})`
+      : live.length > 0 ? liveMsg("recall") : null) as string | null,
     cancel: pr.status === "cancelled" ? `${pr.prNo} is already cancelled`
       : live.length > 0 ? liveMsg("cancel") : null,
     delete: pr.status !== "draft" ? `Only a draft requisition can be deleted (this one is ${pr.status}) — cancel it instead`

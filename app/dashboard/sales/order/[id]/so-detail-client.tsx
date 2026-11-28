@@ -98,6 +98,7 @@ export function SalesOrderDetailClient({
   organizationName,
   businessType = "trading",
   recallBlockers = [],
+  recallDrafts = [],
   deleteBlocker = null,
   cancelBlocker = null,
 }: {
@@ -119,8 +120,10 @@ export function SalesOrderDetailClient({
   editHref?: string;
   organizationName?: string;
   businessType?: string;
-  // Active documents raised from this SO — Recall is hidden while any exist.
+  // Why this SO can't be recalled (documents raised from it, the self-approval rule) — Recall shows only when empty
   recallBlockers?: string[];
+  // Draft PRs / supplier POs raised from it, deleted when it's recalled (listed in the confirmation)
+  recallDrafts?: string[];
   // Why this SO can't be deleted (linked documents) — Delete is hidden when set.
   deleteBlocker?: string | null;
 }) {
@@ -279,7 +282,10 @@ export function SalesOrderDetailClient({
   }
 
   async function handleRecall() {
-    if (!confirm(`Recall ${order.soNo}? This will return it to draft.`)) return;
+    const drafts = recallDrafts.length
+      ? `\n\nAlso deleted, as ${recallDrafts.length > 1 ? "they were" : "it was"} made from the order as it is now (raised again after it's confirmed): ${recallDrafts.join(", ")}. A PR waiting for approval is withdrawn, and its approvers are told.`
+      : "";
+    if (!confirm(`Recall ${order.soNo} to draft so it can be changed? Its reserved stock is released, and it needs to be submitted again.${drafts}`)) return;
     setActioning("recall");
     try {
       const res = await recallSalesOrder(order.id);
@@ -1068,7 +1074,7 @@ export function SalesOrderDetailClient({
               )}
               {status === "confirmed" && can("sales-order:approve") && recallBlockers.length > 0 && (
                 <p className="text-[11px] text-muted-foreground leading-snug">
-                  Can&apos;t recall — active documents raised from this order: {recallBlockers.join(", ")}.
+                  Can&apos;t recall: {recallBlockers.join("; ")}.
                 </p>
               )}
             </div>

@@ -1,5 +1,5 @@
 import { requirePermission } from "@/lib/auth/require-permission";
-import { getSalesOrderDetail, getSalesOrderRecallBlockers, getSalesOrderDeleteBlockers, getSalesOrderCancelBlocker } from "@/server/sales-order";
+import { getSalesOrderDetail, getSalesOrderRecallPlan, getSalesOrderDeleteBlockers, getSalesOrderCancelBlocker } from "@/server/sales-order";
 import { getQuotationBasic, type QuotationBasic } from "@/server/quotation";
 import { getDeliveryOrdersBySoId, getSoItemDeliveredQtys } from "@/server/delivery-order";
 import { getPrsBySoId } from "@/server/purchase-requisition";
@@ -28,17 +28,17 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
     return [...ids];
   })();
 
-  const [linkedQuotations, linkedDos, linkedPrs, itemDeliveredQtys, recallBlockers, deleteBlockers, cancelBlocker] = await Promise.all([
+  const [linkedQuotations, linkedDos, linkedPrs, itemDeliveredQtys, recallPlan, deleteBlockers, cancelBlocker] = await Promise.all([
     Promise.all(allQuotationIds.map((qId) => getQuotationBasic(qId).catch(() => null))).then(
       (results) => results.filter((q): q is QuotationBasic => q !== null)
     ),
     getDeliveryOrdersBySoId(id).catch(() => []),
     getPrsBySoId(id).catch(() => []),
     getSoItemDeliveredQtys(id).catch(() => ({} as Record<string, number>)),
-    order.status === "confirmed" ? getSalesOrderRecallBlockers(id).catch(() => []) : Promise.resolve([]),
+    order.status === "confirmed" ? getSalesOrderRecallPlan(id).catch(() => ({ blockers: ["couldn't check what was raised from it"], drafts: [] as string[] })) : Promise.resolve({ blockers: [] as string[], drafts: [] as string[] }),
     ["draft", "pending-do", "pending-pr", "cancelled"].includes(order.status) ? getSalesOrderDeleteBlockers([id]).catch(() => ({} as Record<string, string>)) : Promise.resolve({} as Record<string, string>),
     !["draft", "pending-do", "pending-pr", "fulfilled", "cancelled"].includes(order.status) ? getSalesOrderCancelBlocker(id).catch(() => null) : Promise.resolve(null),
   ]);
 
-  return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} businessType={profile?.businessType ?? "trading"} recallBlockers={recallBlockers} deleteBlocker={deleteBlockers[id] ?? null} cancelBlocker={cancelBlocker} />;
+  return <SalesOrderDetailClient order={order} linkedQuotations={linkedQuotations} linkedDos={linkedDos} linkedPrs={linkedPrs} permissions={permissions} currentUserId={session.user.id} draftRedirected={draft === "1"} itemDeliveredQtys={itemDeliveredQtys} businessType={profile?.businessType ?? "trading"} recallBlockers={recallPlan.blockers} recallDrafts={recallPlan.drafts} deleteBlocker={deleteBlockers[id] ?? null} cancelBlocker={cancelBlocker} />;
 }

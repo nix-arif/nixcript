@@ -519,11 +519,15 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
                 </Button>
               </>
             )}
-            {canRecall && !editing && (
+            {/* only when recalling would work (checked: issued supplier POs, the self-approval rule) */}
+            {canRecall && !editing && blockers && !blockers.recall && (
               <Button size="sm" variant="outline" className="gap-1.5" onClick={handleRecall} disabled={!!actioning}
-                title={blockers?.recall ?? "Back to draft to change it; it is approved again after"}>
+                title="Back to draft to change it; it is approved again after">
                 <Undo2Icon className="w-3.5 h-3.5" /> {actioning === "recall" ? "Recalling…" : "Recall to edit"}
               </Button>
+            )}
+            {canRecall && !editing && blockers?.recall && (
+              <span className="max-w-xs text-[11px] leading-snug text-muted-foreground">Can&apos;t recall: {blockers.recall}.</span>
             )}
             {canCancel && !editing && (
               <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleCancel} disabled={!!actioning}>

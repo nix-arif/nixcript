@@ -1,5 +1,8 @@
 "use server";
 
+import { notifyUsersWithPermission } from "@/server/notifications";
+import { discardDraftPos, draftPosOfSo } from "@/lib/purchase-order/draft-pos";
+import { isSelfActionAllowed } from "@/server/approval-settings";
 import { isApprovalRequired } from "@/lib/approvals/required";
 import { cascadeCategories, cpoCategories, mapCategoriesToOrg, poCategories, quotationCategories, resolveCategories } from "@/lib/document-category/inherit";
 import { fillSalesOrderItemCustomers } from "@/lib/trace/item-customer";
@@ -1607,11 +1610,38 @@ export async function getSalesOrderDeleteBlockers(soIds: string[]): Promise<Reco
 
 // Read-only: what would stop this SO being recalled. The detail page hides
 // the Recall button when this isn't empty; recallSalesOrder re-checks anyway.
+// What stops recalling a confirmed SO, and what recalling it discards. Its PRs not approved yet (a draft,
+// or one waiting for approval: no number yet, nothing ordered from it) and draft supplier POs raised
+// straight from it were made from the order as it was: they don't hold it, and are deleted when it's
+// recalled (a PR's approvers are told it was withdrawn). Anything else live (an approved PR, an issued PO,
+// a DO, an invoice) holds it; so does the self-approval rule for its own creator.
+async function soRecallPlan(orgId: string, soId: string, userId: string): Promise<{ blockers: string[]; draftPrs: { id: string; prNo: string; status: string }[]; draftPos: { id: string; poNo: string | null }[] }> {
+  const [so] = await db.select({ createdBy: salesOrder.createdBy }).from(salesOrder).where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
+  if (!so) return { blockers: ["Sales order not found"], draftPrs: [], draftPos: [] };
+  const draftPrs = await db
+    .select({ id: purchaseRequisition.id, prNo: purchaseRequisition.prNo, status: purchaseRequisition.status })
+    .from(purchaseRequisition)
+    .where(and(eq(purchaseRequisition.organizationId, orgId), eq(purchaseRequisition.salesOrderId, soId), inArray(purchaseRequisition.status, ["draft", "submitted"])));
+  const draftPos = await draftPosOfSo(orgId, soId);
+  const skip = new Set([...draftPrs.map((p) => `PR ${p.prNo}`), ...draftPos.map((p) => `PO ${p.poNo ?? "(unnumbered)"}`)]);
+  const live = (await activeSalesOrderDownstream(orgId, soId)).filter((label) => !skip.has(label));
+  const blockers = live.length ? [`documents raised from it are still active (${live.join(", ")}): cancel or recall those first`] : [];
+  if (so.createdBy === userId && !(await isSelfActionAllowed(orgId, "sales-order:approve")))
+    blockers.push("you can't recall your own sales order (self-approval is off on the Approvals page)");
+  return { blockers, draftPrs, draftPos: draftPos.map((p) => ({ id: p.id, poNo: p.poNo })) };
+}
+
+/** Why a confirmed SO can't be recalled (empty: it can — the page shows Recall only then) */
 export async function getSalesOrderRecallBlockers(soId: string): Promise<string[]> {
-  const { orgId } = await requireAccess("sales-order:read");
-  const [so] = await db.select({ id: salesOrder.id }).from(salesOrder).where(and(eq(salesOrder.id, soId), eq(salesOrder.organizationId, orgId)));
-  if (!so) return [];
-  return activeSalesOrderDownstream(orgId, soId);
+  const { orgId, userId } = await requireAccess("sales-order:read");
+  return (await soRecallPlan(orgId, soId, userId)).blockers;
+}
+
+/** The SO page's Recall: why it can't be, and the drafts it would delete (listed in its confirmation) */
+export async function getSalesOrderRecallPlan(soId: string): Promise<{ blockers: string[]; drafts: string[] }> {
+  const { orgId, userId } = await requireAccess("sales-order:read");
+  const plan = await soRecallPlan(orgId, soId, userId);
+  return { blockers: plan.blockers, drafts: [...plan.draftPrs.map((p) => `PR ${p.prNo}${p.status === "submitted" ? " (waiting for approval)" : ""}`), ...plan.draftPos.map((p) => `PO ${p.poNo ?? "(draft)"}`)] };
 }
 
 // ── Cancel ────────────────────────────────────────────────────────────────
@@ -1885,13 +1915,25 @@ export async function recallSalesOrder(id: string): Promise<{ ok: true } | { ok:
     return { ok: false, error: e instanceof Error ? e.message : "You can't recall this document" };
   }
 
-  const downstream = await activeSalesOrderDownstream(orgId, id);
-  if (downstream.length > 0) {
+  const plan = await soRecallPlan(orgId, id, userId);
+  if (plan.blockers.length > 0) {
     return {
       ok: false,
-      error: `Can't recall ${so.soNo} — documents raised from it are still active: ${downstream.join(", ")}. Cancel or recall those first.`,
+      error: `Can't recall ${so.soNo}: ${plan.blockers.join("; ")}.`,
     };
   }
+
+  // its PRs not approved yet and draft supplier POs were made from the order as it was: deleted (raised
+  // again after it's confirmed); a PR waiting for approval is withdrawn, and its approvers are told
+  if (plan.draftPrs.length) await db.delete(purchaseRequisition).where(inArray(purchaseRequisition.id, plan.draftPrs.map((p) => p.id))); // their lines go with them
+  for (const pr of plan.draftPrs.filter((p) => p.status === "submitted"))
+    await notifyUsersWithPermission(orgId, "purchase-requisition:approve", {
+      type: "purchase-requisition:withdrawn",
+      title: `Purchase Requisition withdrawn`,
+      body: `${pr.prNo} no longer needs approval: sales order ${so.soNo} was recalled to be corrected.`,
+      link: `/dashboard/sales/order/${id}`,
+    }).catch(() => {});
+  await discardDraftPos(plan.draftPos.map((p) => p.id));
 
   await db.update(salesOrder).set({ status: "draft", approvedBy: null, approvedAt: null, stockReservationStatus: null, stockReservedAt: null, stockReservedBy: null }).where(eq(salesOrder.id, id));
 

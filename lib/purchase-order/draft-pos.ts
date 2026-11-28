@@ -30,14 +30,28 @@ export async function posOfPr(orgId: string, prId: string): Promise<{ drafts: Pr
   };
 }
 
-/**
- * Deletes the PR's draft supplier POs, with their files: the supplier quotation and the line images —
- * but not an image the PR's own lines (or another PO) still use, as a PO line copies the PR's image.
- */
+/** Deletes the PR's draft supplier POs (discardDraftPos); their numbers. */
 export async function discardDraftPosOfPr(orgId: string, prId: string): Promise<string[]> {
   const { drafts } = await posOfPr(orgId, prId);
-  if (drafts.length === 0) return [];
-  const ids = drafts.map((d) => d.id);
+  await discardDraftPos(drafts.map((d) => d.id));
+  return drafts.map((d) => d.poNo ?? d.id);
+}
+
+/** The draft supplier POs raised straight from a sales order (not through a PR): never issued. */
+export async function draftPosOfSo(orgId: string, soId: string): Promise<PrPo[]> {
+  const rows = await db
+    .select({ id: purchaseOrder.id, poNo: purchaseOrder.poNo, status: purchaseOrder.status, approvedAt: purchaseOrder.approvedAt, prId: purchaseOrder.purchaseRequisitionId })
+    .from(purchaseOrder)
+    .where(and(eq(purchaseOrder.organizationId, orgId), eq(purchaseOrder.salesOrderId, soId)));
+  return rows.filter((r) => !r.prId && r.status === "draft" && isDraftRef(r.poNo) && !r.approvedAt);
+}
+
+/**
+ * Deletes these draft supplier POs, with their files: the supplier quotation and the line images —
+ * but not an image a PR's lines (or another PO) still use, as a PO line copies the PR's image.
+ */
+export async function discardDraftPos(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
 
   const [pos, items] = await Promise.all([
     db.select({ key: purchaseOrder.supplierQuotationKey }).from(purchaseOrder).where(inArray(purchaseOrder.id, ids)),
@@ -67,5 +81,4 @@ export async function discardDraftPosOfPr(orgId: string, prId: string): Promise<
     ...quotationKeys.filter((k) => !keep.has(k)).map((k) => del(process.env.R2_SUPPLIER_QUOTATION_BUCKET, k)),
     ...imageKeys.filter((k) => !keep.has(k)).map((k) => del(process.env.R2_PROCUREMENT_IMAGES_BUCKET, k)),
   ]);
-  return drafts.map((d) => d.poNo ?? d.id);
 }

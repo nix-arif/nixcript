@@ -57,8 +57,9 @@ export async function getTrailActions(cpoId: string): Promise<TrailActionMap | n
   const so = data.so;
   if (so) {
     if (so.status === "confirmed" && can("sales-order:approve")) {
+      // Recall only when it's safe (nothing live raised from it, the self-approval rule): not shown otherwise
       const b = await safe(() => getSalesOrderRecallBlockers(so.id));
-      if (b) out.so.push(act("recall", b.length ? `Can't recall — active documents raised from it: ${b.join(", ")}` : null));
+      if (b && b.length === 0) out.so.push(act("recall", null));
     }
     // not for an unsubmitted SO (draft / pending-do / pending-pr): that's deleted, not cancelled
     if (!["draft", "pending-do", "pending-pr", "fulfilled", "cancelled"].includes(so.status) && can("sales-order:approve")) {
@@ -80,7 +81,7 @@ export async function getTrailActions(cpoId: string): Promise<TrailActionMap | n
     const list: TrailAction[] = [];
     const b = await safe(() => purchaseRequisitionBlockers(pr.id));
     if (b) {
-      if (pr.status === "approved" && can("purchase-requisition:approve")) list.push(act("recall", b.recall));
+      if (pr.status === "approved" && can("purchase-requisition:approve") && !b.recall) list.push(act("recall", null));
       if (pr.status !== "cancelled" && can("purchase-requisition:update")) list.push(act("cancel", b.cancel));
       if (pr.status === "draft" && can("purchase-requisition:delete")) list.push(act("delete", b.delete));
     }
@@ -96,7 +97,7 @@ export async function getTrailActions(cpoId: string): Promise<TrailActionMap | n
     const list: TrailAction[] = [];
     if (po.status === "confirmed" && can("purchase-order:approve")) {
       const b = await safe(() => getPurchaseOrderRecallBlockers(po.id));
-      if (b) list.push(act("recall", b.length ? `Can't recall — active documents raised from it: ${b.join(", ")}` : null));
+      if (b && b.length === 0) list.push(act("recall", null));
     }
     if (po.status === "confirmed" && can("purchase-order:update")) {
       const b = await safe(() => getPurchaseOrderCancelBlocker(po.id));
