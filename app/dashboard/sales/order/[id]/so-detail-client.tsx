@@ -6,7 +6,7 @@ import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { SoReferenceDocs } from "@/components/sales-order/reference-docs";
-import { soLineQty } from "@/lib/sales-order/set-qty";
+import { soLineQty, soLineSets } from "@/lib/sales-order/set-qty";
 import { AmendmentHistory } from "@/components/amendment-history";
 import { DocumentCategoriesCard } from "@/components/document-categories-card";
 import { toast } from "sonner";
@@ -513,7 +513,6 @@ export function SalesOrderDetailClient({
                       )}
                       <th className="text-left align-middle py-1.5 pr-3 text-[10px] tracking-wider font-medium uppercase">Description</th>
                       <th className="text-right align-middle py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">Qty</th>
-                      <th className="text-center align-middle py-1.5 pr-3 w-16 text-[10px] tracking-wider font-medium uppercase">Total qty</th>
                       <th className="text-left align-middle py-1.5 pr-3 w-12 text-[10px] tracking-wider font-medium uppercase">UOM</th>
                       {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (
                         <th className="text-right align-middle py-1.5 pr-3 w-20 text-[10px] tracking-wider font-medium uppercase">Delivered</th>
@@ -563,7 +562,7 @@ export function SalesOrderDetailClient({
                       const distinctCpos = new Set(
                         order.items.map((i) => (i as any).sourceCustomerPoId).filter(Boolean),
                       );
-                      const colCount = 9
+                      const colCount = 8
                         + ((status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 ? 1 : 0)
                         + (can("sales-order:approve") && status === "submitted" ? 1 : 0)
                         + (showSourcing ? 3 : 0);
@@ -683,17 +682,15 @@ export function SalesOrderDetailClient({
                         // Set group header
                         if ((item as any).setGroupId && renderItems.findIndex((i) => (i as any).setGroupId === (item as any).setGroupId) === idx) {
                           const groupItems = order.items.filter((i) => (i as any).setGroupId === (item as any).setGroupId);
-                          // the set's lines are priced for one set
-                          const perSetPrice = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
-                          const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
-                          const groupTotal = perSetPrice * setQtyNum;
+                          const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                          const perSetPrice = groupTotal / soLineSets((item as any));
                           rows.push(
                             <tr key={`grp-${(item as any).setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
                               <td colSpan={colCount} className={`pl-4 pr-4 py-1.5 ${color?.border ?? ""}`}>
                                 <div className="flex items-center gap-2">
                                   <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{(item as any).setGroupLabel || "Set"}</span>
                                   <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
-                                    × {(item as any).setQty || "1"} sets
+                                    {(item as any).setQty || "1"} sets · totals
                                   </span>
                                   {groupTotal > 0 && (
                                     <>
@@ -913,13 +910,10 @@ export function SalesOrderDetailClient({
                                 </span>
                               )}
                             </td>
-                            <td className={`py-2 pr-3 align-top text-center tabular-nums font-mono ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
-                              {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
-                            </td>
                             <td className={`py-2 pr-3 align-top ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</td>
                             {(status === "confirmed" || status === "fulfilled") && Object.keys(itemDeliveredQtys).length > 0 && (() => {
                               const delivered = itemDeliveredQtys[item.id] ?? 0;
-                              const total = soLineQty(item as { qty?: string | null; setGroupId?: string | null; setQty?: string | null }); // × the number of sets
+                              const total = soLineQty(item);
                               const pct = total > 0 ? Math.min(100, (delivered / total) * 100) : 0;
                               const full = delivered >= total;
                               return (

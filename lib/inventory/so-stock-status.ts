@@ -79,7 +79,7 @@ export async function computeStockCheckItems(orgId: string, soId: string) {
   const needByProduct = new Map<string, { item: (typeof productItems)[number]; required: number }>();
   for (const item of productItems) {
     const cur = needByProduct.get(item.productId!);
-    const required = soLineQty(item); // × the number of sets
+    const required = soLineQty(item);
     if (cur) cur.required += required;
     else needByProduct.set(item.productId!, { item, required });
   }

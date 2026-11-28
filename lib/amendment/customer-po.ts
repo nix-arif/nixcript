@@ -40,7 +40,7 @@ import {
   salesOrderItem,
   supplier,
 } from "@/db/schema";
-import { soLineQty } from "@/lib/sales-order/set-qty";
+import { soLineQty, toSoTotalLine } from "@/lib/sales-order/set-qty";
 import { prCoveredQty } from "@/lib/purchase-requisition/coverage";
 import { newDraftRef } from "@/lib/draft-ref";
 import { bookSetPriceAsUnitPrice } from "@/lib/quotation-set-price";
@@ -144,8 +144,7 @@ const keyOf = (l: { productCode?: string | null; description?: string | null }) 
 const num = (v: string | null | undefined) => parseFloat(v ?? "0") || 0;
 const qtyText = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 const money = (n: number) => `RM ${n.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const lineTotal = (l: { totalPrice?: string | null; setGroupId?: string | null; setQty?: string | null }) =>
-  num(l.totalPrice) * (l.setGroupId ? num(l.setQty) || 1 : 1);
+const lineTotal = (l: { totalPrice?: string | null }) => num(l.totalPrice);
 
 /** The revision a document would get next (1 for its first amendment). */
 export async function nextRevision(docType: DocType, docId: string): Promise<number> {
@@ -249,7 +248,7 @@ export async function planCustomerPoAmendment(
   }
 
   // new SO lines from the amended CPO lines (a set priced as a whole carries its price on its first line)
-  const newLines = bookSetPriceAsUnitPrice(newItems.filter((i) => !i._excluded)).map(soLineFromCpo);
+  const newLines = bookSetPriceAsUnitPrice(newItems.filter((i) => !i._excluded)).map(toSoTotalLine).map(soLineFromCpo);
 
   // match them to the SO's lines: same product code (or description), in order
   const queues = new Map<string, SoItemRow[]>();
@@ -314,7 +313,7 @@ export async function planCustomerPoAmendment(
     }
   }
 
-  // the changes per product, as quantities to buy / deliver (× the number of sets)
+  // the changes per product, as quantities to buy / deliver
   const sum = (ls: typeof after, f: (l: (typeof after)[number]) => number) => ls.reduce((s, l) => s + f(l), 0);
   const keys = new Set([...mine.map(keyOf), ...newLines.map(keyOf)]);
   const mineAfter = after.filter((l) => !others.includes(l as SoItemRow));

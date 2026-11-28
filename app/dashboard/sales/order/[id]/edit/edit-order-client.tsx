@@ -1,5 +1,6 @@
 "use client";
 
+import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
@@ -278,8 +279,7 @@ function calcLine(item: LineItem): LineItem {
 }
 
 function calcTotals(items: LineItem[], sstPct: string, disc: OverallDiscount) {
-  // a set's lines are priced for one set: × the number of sets
-  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0") * (i.setGroupId ? parseFloat(i.setQty || "1") || 1 : 1), 0);
+  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0"), 0);
   const overallDiscAmt = overallDiscountAmount(subtotal, disc);
   const afterDisc = subtotal - overallDiscAmt;
   const sstAmt = (afterDisc * (parseFloat(sstPct) || 0)) / 100;
@@ -1629,8 +1629,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     </>
                   )}
                   <th className="text-left align-bottom pb-2 pr-2 uppercase">Description</th>
-                  <th className="text-right align-bottom pb-2 pr-2 w-16 uppercase">Qty/Set</th>
-                  <th className="text-center align-bottom pb-2 pr-2 w-16 uppercase">Total qty</th>
+                  <th className="text-right align-bottom pb-2 pr-2 w-16 uppercase">Qty</th>
                   <th className="text-left align-bottom pb-2 pr-2 w-14 uppercase">UOM</th>
                   <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Unit price</th>
                   <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Total unit price</th>
@@ -1639,7 +1638,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
               </thead>
               <tbody>
                 {(() => {
-                  const colCount = 9 + (showSourcing ? 3 : 0);
+                  const colCount = 8 + (showSourcing ? 3 : 0);
                   const SrcTag = ({ src: rawSrc, item: it }: { src: Array<"cpo" | "quotation" | "user" | "so"> | string | null | undefined; item: LineItem }) => {
                     const src: Array<"cpo" | "quotation" | "user" | "so"> | null = !rawSrc ? null : Array.isArray(rawSrc) ? rawSrc : [rawSrc as "cpo" | "quotation" | "user" | "so"];
                     if (!src?.length) return null;
@@ -1807,19 +1806,17 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                   }
                   if (item.setGroupId && renderItems.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
                     const groupItems = items.filter((i) => i.setGroupId === item.setGroupId);
-                    const setQtyNum = parseFloat((item as any).setQty || "1") || 1;
-                    const perSetTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
-                    const groupTotal = perSetTotal * setQtyNum;
-                    const perSetPrice = perSetTotal; // the set's lines are priced for one set
+                    const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                    const perSetPrice = groupTotal / soLineSets((item as any));
                     rows.push(
                       <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
                         <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
                           <div className="flex items-center gap-2">
                             <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{(item as any).setGroupLabel || "Set"}</span>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
-                              × {(item as any).setQty || "1"} sets
+                              {(item as any).setQty || "1"} sets · totals
                             </span>
-                            {perSetTotal > 0 && (
+                            {groupTotal > 0 && (
                               <>
                                 <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
                                 <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
@@ -2089,11 +2086,6 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       <SrcTag src={item._qtySource} item={item} />
                     </td>
                     <td className="py-1.5 pr-2 align-top">
-                      <div className={`h-7 flex items-center justify-center font-mono tabular-nums text-[11px] ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
-                        {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
-                      </div>
-                    </td>
-                    <td className="py-1.5 pr-2 align-top">
                       <div className={`h-7 flex items-center text-[11px] px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</div>
                     </td>
                     <td className="py-1.5 pr-2 align-top">
@@ -2115,7 +2107,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     </td>
                     <td className="py-1.5 pr-2 align-top">
                       <div className={`h-7 flex items-center justify-end font-mono tabular-nums text-[11px] ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
-                        {(() => { const s = parseFloat((item as any).setQty || "0") || 1; const q = parseFloat(item.qty || "0"); const u = parseFloat(item.unitPrice || "0"); return fmt(q * s * u); })()}
+                        {fmt(parseFloat(item.qty || "0") * parseFloat(item.unitPrice || "0"))}
                       </div>
                     </td>
                     <td className="py-1.5 align-top">

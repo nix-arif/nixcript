@@ -67,6 +67,7 @@ import { applySoSheet, downloadSoItemsSheet, readSoItemsSheet } from "@/lib/sale
 import { uid } from "@/lib/uid";
 import { NO_DISCOUNT, cpoDiscount, discountFromQuotations, overallDiscountAmount, type OverallDiscount } from "@/lib/sales-order/overall-discount";
 import { bookSetPriceAsUnitPrice } from "@/lib/quotation-set-price";
+import { toSoTotalLine, soLineSets } from "@/lib/sales-order/set-qty";
 import { OverallDiscountInput } from "../overall-discount-input";
 
 type Customer = Awaited<ReturnType<typeof getCustomers>>[number];
@@ -312,8 +313,7 @@ function calcLine(item: LineItem): LineItem {
 }
 
 function calcTotals(items: LineItem[], sstPct: string, disc: OverallDiscount) {
-  // a set's lines are priced for one set: × the number of sets
-  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0") * (i.setGroupId ? parseFloat(i.setQty || "1") || 1 : 1), 0);
+  const subtotal = items.reduce((s, i) => s + parseFloat(i.totalPrice || "0"), 0);
   const overallDiscAmt = overallDiscountAmount(subtotal, disc);
   const afterDisc = subtotal - overallDiscAmt;
   const sstAmt = (afterDisc * (parseFloat(sstPct) || 0)) / 100;
@@ -489,7 +489,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       const links = (c.quotationLinks && c.quotationLinks.length > 0)
         ? c.quotationLinks
         : c.quotationId && c.quotationNo ? [{ quotationId: c.quotationId, quotationNo: c.quotationNo }] : [];
-      return bookSetPriceAsUnitPrice(c.items ?? []).map((i) => ({ ...i, _cpoId: c.id, _cpoNo: c.customerPoNo, _qtNo: sourceQuotationNo(i, links), ...itemCustomer(i, c) }));
+      return bookSetPriceAsUnitPrice(c.items ?? []).map(toSoTotalLine).map((i) => ({ ...i, _cpoId: c.id, _cpoNo: c.customerPoNo, _qtNo: sourceQuotationNo(i, links), ...itemCustomer(i, c) }));
     });
     if (allItems.length > 0) {
       const codes = [...new Set(allItems.map((i) => i.productCode).filter(Boolean) as string[])];
@@ -707,7 +707,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
             const codeMap = new Map(resolved.map((p) => [p.productCode, p]));
             setItems((prev) => {
               const base = prev.filter((i) => i.description || i.productCode);
-              const newItems = bookSetPriceAsUnitPrice(data.items ?? []).map((item) =>
+              const newItems = bookSetPriceAsUnitPrice(data.items ?? []).map(toSoTotalLine).map((item) =>
                 calcLine({
                   _key: uid(),
                   rowNo: 0,
@@ -912,7 +912,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       }
 
       // Append items (renumber after existing), tag with source quotation
-      const newItems = bookSetPriceAsUnitPrice(qt.items).map((item) =>
+      const newItems = bookSetPriceAsUnitPrice(qt.items).map(toSoTotalLine).map((item) =>
         calcLine({
           _key: uid(),
           rowNo: 0, // renumbered below
@@ -2650,8 +2650,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     </>
                   )}
                   <th className="text-left align-bottom pb-2 pr-2 uppercase">Description</th>
-                  <th className="text-right align-bottom pb-2 pr-2 w-16 uppercase">Qty/Set</th>
-                  {soType !== "proforma" && <th className="text-center align-bottom pb-2 pr-2 w-16 uppercase">Total qty</th>}
+                  <th className="text-right align-bottom pb-2 pr-2 w-16 uppercase">Qty</th>
                   <th className="text-left align-bottom pb-2 pr-2 w-14 uppercase">UOM</th>
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Unit price</th>}
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Total unit price</th>}
@@ -2667,7 +2666,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     linkedQuotations.some((q) => q.customerId || q.customerSnapshot) ||
                     linkedCpos.some((c) => c.customerId || c.customerSnapshot)
                   );
-                  const colCount = 5 + (soType !== "proforma" ? 3 : 0) + (hasQuotationCustomers ? 1 : 0) + (showSourcing ? 3 : 0) + 1;
+                  const colCount = 5 + (soType !== "proforma" ? 2 : 0) + (hasQuotationCustomers ? 1 : 0) + (showSourcing ? 3 : 0) + 1;
                   // Build color index map: each unique groupId or cpoId gets a rotating palette entry
                   // Avoid: green/emerald (from-CPO tag), amber/yellow (edited tag), blue/sky (CPO badge)
                   const COLOR_PALETTE = [
@@ -2789,19 +2788,17 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   }
                   if (item.setGroupId && renderItems.findIndex((i) => i.setGroupId === item.setGroupId) === rowIdx) {
                     const groupItems = items.filter((i) => i.setGroupId === item.setGroupId);
-                    const setQtyNum = parseFloat(item.setQty || "1") || 1;
-                    const perSetTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
-                    const groupTotal = perSetTotal * setQtyNum;
-                    const perSetPrice = perSetTotal; // the set's lines are priced for one set
+                    const groupTotal = groupItems.reduce((s, i) => s + parseFloat(i.totalPrice ?? "0"), 0);
+                    const perSetPrice = groupTotal / soLineSets(item);
                     rows.push(
                       <tr key={`grp-${item.setGroupId}`} className={`${color?.hdr ?? "bg-muted/40"} border-b border-border/40`}>
                         <td colSpan={colCount} className={`px-2 py-1.5 ${color?.border ?? ""}`}>
                           <div className="flex items-center gap-2">
                             <span className={`text-[11px] font-bold tracking-tight ${color?.text ?? "text-foreground"}`}>{item.setGroupLabel || "Set"}</span>
                             <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${color?.text ?? "text-muted-foreground"} border-current/30 bg-white/40 dark:bg-black/20`}>
-                              × {item.setQty || "1"} sets
+                              {item.setQty || "1"} sets · totals
                             </span>
-                            {soType !== "proforma" && perSetTotal > 0 && (
+                            {soType !== "proforma" && groupTotal > 0 && (
                               <>
                                 <span className={`text-[10px] tabular-nums ${color?.text ?? "text-muted-foreground"}`}>1 set: {fmt(perSetPrice)}</span>
                                 <span className={`ml-auto text-[11px] font-semibold ${color?.text ?? "text-foreground"} tabular-nums`}>{fmt(groupTotal)}</span>
@@ -3133,13 +3130,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       />
                       <Tag src={item._qtySource} />
                     </td>
-                    {soType !== "proforma" && (
-                      <td className="py-1.5 pr-2 align-top">
-                        <div className={`h-7 flex items-center justify-center font-mono tabular-nums text-[11px] ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
-                          {(() => { const s = parseFloat(item.setQty || "0") || 1; const q = parseFloat(item.qty || "0"); return s > 1 ? (q * s).toLocaleString("en-MY") : q.toLocaleString("en-MY"); })()}
-                        </div>
-                      </td>
-                    )}
                     <td className="py-1.5 pr-2 align-top">
                       <div className={`h-7 flex items-center text-[11px] px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</div>
                     </td>
@@ -3165,7 +3155,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     {soType !== "proforma" && (
                       <td className="py-1.5 pr-2 align-top">
                         <div className={`h-7 flex items-center justify-end font-mono tabular-nums text-[11px] ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>
-                          {(() => { const s = parseFloat(item.setQty || "0") || 1; const q = parseFloat(item.qty || "0"); const u = parseFloat(item.unitPrice || "0"); return fmt(q * s * u); })()}
+                          {fmt(parseFloat(item.qty || "0") * parseFloat(item.unitPrice || "0"))}
                         </div>
                       </td>
                     )}

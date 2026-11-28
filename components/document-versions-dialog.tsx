@@ -61,7 +61,8 @@ const FIELDS: Record<DocType, { key: string; label: string; show: (d: Row) => st
 };
 
 const lineKey = (l: Row) => str(l.productCode).trim().toLowerCase() || `d:${str(l.description).trim().toLowerCase()}`;
-const sets = (l: Row) => (l.setGroupId && num(l.setQty) > 1 ? ` × ${num(l.setQty)} sets` : "");
+// a sales order line's quantity is its total ("(2 sets)"); a customer PO line's is for one set ("× 2 sets")
+const sets = (l: Row, docType: DocType) => (l.setGroupId && num(l.setQty) > 1 ? (docType === "so" ? ` (${num(l.setQty)} sets)` : ` × ${num(l.setQty)} sets`) : "");
 
 // the lines of two versions side by side: matched by product code (or description), in order
 function pairLines(a: Row[], b: Row[]) {
@@ -197,7 +198,7 @@ export function DocumentVersionsDialog({ docType, docId, open, onOpenChange }: {
                       const ref = a ?? b!;
                       const gone = compare && !b;
                       const added = compare && !a;
-                      const q = (l: Row | null) => (l ? `${str(l.qty)} ${str(l.uom)}`.trim() + sets(l) : "");
+                      const q = (l: Row | null) => (l ? `${str(l.qty)} ${str(l.uom)}`.trim() + sets(l, docType) : "");
                       return (
                         <tr key={i} className={cn("border-t border-border/60", gone && "text-muted-foreground line-through", added && "bg-green-50 dark:bg-green-950/30")}>
                           <td className="py-1 pr-2 align-top font-mono">{str(ref.productCode) || "—"}{added && <span className="ml-1 not-italic text-green-700"> new</span>}</td>

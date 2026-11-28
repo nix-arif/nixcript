@@ -1,5 +1,4 @@
-// How much of a sales order's lines its PRs already ask for, per product code (a PR line is its total;
-// an SO line is quantity × sets).
+// How much of a sales order's lines its PRs already ask for, per product code (PR and SO lines are totals).
 // A line is "covered" only as far as that quantity goes: when an amendment raises a quantity, the
 // rest is still to request (it used to be skipped once the product was on any PR).
 // Server-only (reads the database).

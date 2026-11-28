@@ -247,7 +247,7 @@ async function checkAndFulfillSo(soId: string, orgId: string): Promise<void> {
 
   const allFulfilled = soItems.every((item) => {
     const delivered = deliveredMap.get(item.id) ?? 0;
-    return delivered >= soLineQty(item); // × the number of sets
+    return delivered >= soLineQty(item);
   });
 
   if (allFulfilled) {
@@ -302,7 +302,7 @@ export async function getSoRemainingItems(soId: string): Promise<SoItemRemaining
   const deliveredMap = new Map(deliveredRows.map((r) => [r.soItemId as string, parseFloat(r.total)]));
 
   return items.map((item) => {
-    const originalQty = soLineQty(item); // × the number of sets
+    const originalQty = soLineQty(item);
     const deliveredQty = deliveredMap.get(item.id) ?? 0;
     const remainingQty = Math.max(0, originalQty - deliveredQty);
     return {

@@ -1,4 +1,5 @@
 import { PDFDocument, PDFFont, PDFPage, PDFImage, rgb, StandardFonts } from "pdf-lib";
+import { soLineSets } from "@/lib/sales-order/set-qty";
 import fontkit from "@pdf-lib/fontkit";
 import fs from "fs";
 import path from "path";
@@ -263,19 +264,17 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
   const showSetHeaders = new Set(items.map(i => i.setGroupId).filter(Boolean)).size > 1;
   const C_NO   = 22;
   const C_CODE = 65;
-  const C_QTY  = showSetHeaders ? 38 : 28;
-  const C_TQTY = showSetHeaders ? 48 : 0;
+  const C_QTY  = 34;
   const C_UOM  = 34;
   const C_UP   = 64;
   const C_DISC = 55;
   const C_TOT  = 68;
-  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_TQTY - C_UOM - C_UP - C_DISC - C_TOT;
+  const C_DESC = CW - C_NO - C_CODE - C_QTY - C_UOM - C_UP - C_DISC - C_TOT;
   const X_NO   = ML;
   const X_CODE = X_NO   + C_NO;
   const X_DESC = X_CODE + C_CODE;
   const X_QTY  = X_DESC + C_DESC;
-  const X_TQTY = X_QTY  + C_QTY;
-  const X_UOM  = X_TQTY + C_TQTY;
+  const X_UOM  = X_QTY  + C_QTY;
   const X_UP   = X_UOM  + C_UOM;
   const X_DISC = X_UP   + C_UP;
   const X_TOT  = X_DISC + C_DISC;
@@ -428,14 +427,14 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
           .reduce((s, r) => s + Number(r.item.totalPrice ?? 0), 0);
         const setQty     = Number(it.setQty ?? 1);
         const displayQty = setQty * sets;
-        // the set's lines are priced for one set
-        const pricePerSet = setTotal;
+        // the lines are totals for all the sets
+        const pricePerSet = setTotal / soLineSets(it);
         const _lbl = it.setGroupLabel ?? "Set";
         renderItems.push({
           kind: "setHeader",
           label: _lbl.toLowerCase() === "not-as-set" ? "Loose Items" : _lbl,
           qty: displayQty,
-          setTotal: setTotal * setQty * sets,
+          setTotal: setTotal * sets,
           pricePerSet,
           rowH: SET_HDR_H,
         });
@@ -609,8 +608,7 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
         { label: "No",                                   x: X_NO,   w: C_NO   },
         { label: "Product Code",                         x: X_CODE, w: C_CODE },
         { label: "Description",                          x: X_DESC, w: C_DESC },
-        { label: showSetHeaders ? "Qty/Set" : "Qty",     x: X_QTY,  w: C_QTY  },
-        ...(showSetHeaders ? [{ label: "Total Qty", x: X_TQTY, w: C_TQTY }] : []),
+        { label: "Qty",                                  x: X_QTY,  w: C_QTY  },
         { label: "UOM",                                  x: X_UOM,  w: C_UOM  },
         { label: "Unit Price",                           x: X_UP,   w: C_UP   },
         { label: "Discount",                             x: X_DISC, w: C_DISC },
@@ -662,7 +660,7 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
         const labelUpper = entry.label.toUpperCase();
         const labelW     = fontS.widthOfTextAtSize(labelUpper, FS_DESC);
         page.drawText(labelUpper, { x: ML + TABLE_PAD, y: textY, size: FS_DESC, font: fontS, color: C_DARK });
-        const qtyText = `  ×  ${entry.qty} ${entry.qty === 1 ? "set" : "sets"}`;
+        const qtyText = `  (${entry.qty} ${entry.qty === 1 ? "set" : "sets"}${entry.qty > 1 ? " - quantities are totals" : ""})`;
         page.drawText(qtyText, { x: ML + TABLE_PAD + labelW, y: textY, size: FS_CODE, font: fontL, color: C_DARK });
         if (entry.qty > 1) {
           const qtyTextW = fontL.widthOfTextAtSize(qtyText, FS_CODE);
@@ -714,13 +712,6 @@ export async function generateSalesOrderPdf(data: Data): Promise<Uint8Array> {
       page.drawText(String(item.qty ?? 0), {
         x: X_QTY + (C_QTY - qtyW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK,
       });
-
-      if (showSetHeaders) {
-        const totalQtyVal = Number(item.qty ?? 0) * Number(item.setQty ?? 1);
-        const tqStr = String(totalQtyVal);
-        const tqW   = fontR.widthOfTextAtSize(tqStr, FS_DESC);
-        page.drawText(tqStr, { x: X_TQTY + (C_TQTY - tqW) / 2, y: textBaseline, size: FS_DESC, font: fontR, color: C_DARK });
-      }
 
       const uomStr = sanitizeText(item.uom || "—");
       const uomW   = fontR.widthOfTextAtSize(uomStr, FS_CODE);

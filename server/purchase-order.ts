@@ -777,7 +777,6 @@ export async function getSalesOrderItemsForPo(soId: string): Promise<SoItemsForP
   const items = unorderedItems.map((i) => {
     const cost = i.productCode ? (costMap[i.productCode] ?? null) : null;
     const unitPrice = cost ?? "0";
-    // the SO line is for one set: order for every set
     const qty = soLineQty(i);
     const price = parseFloat(unitPrice);
     return {

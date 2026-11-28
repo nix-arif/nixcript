@@ -896,7 +896,8 @@ export async function maybeCreateIntercompanySalesOrder(poId: string): Promise<v
           lineType: "sell",
           setGroupId: item.setGroupId ?? undefined,
           setGroupLabel: item.setGroupLabel ?? undefined,
-          setQty: item.setQty ?? undefined,
+          // a CPO line is per set, and the PO's are totals: so one set
+          setQty: item.setGroupId ? "1" : undefined,
         })),
         amount: po.grandTotal ?? "0",
         currency: po.currency ?? "MYR",

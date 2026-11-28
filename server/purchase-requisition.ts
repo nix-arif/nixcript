@@ -765,7 +765,7 @@ export async function getSoItemsForPr(soId: string) {
   // issued supplier PO of any of the owner's companies, else the catalog cost), in that price's currency
   const prices = await lastPurchasePrices(await getOwnerOrgIds(orgId), items.map((i) => i.productCode));
 
-  // What the SO's active PRs already ask for (quantity × sets, per product): only the rest is offered,
+  // What the SO's active PRs already ask for (per product): only the rest is offered,
   // so a quantity raised by an amendment can still be requested
   const live = items.filter((i) => !i.prExcluded && (i.description || i.productCode));
   const remaining = remainingPerLine(live, (await prCoveredQty(orgId, [soId])).get(soId));
@@ -784,7 +784,7 @@ export async function getSoItemsForPr(soId: string) {
         productId: i.productId ?? undefined,
         productCode: i.productCode ?? "",
         description: i.description ?? "",
-        // the total to buy (the SO line × its sets): a PR line is its total (lib/sales-order/set-qty.ts)
+        // the total to buy: SO and PR lines are totals (lib/sales-order/set-qty.ts)
         qty: Number.isInteger(i._total) ? String(i._total) : String(Number(i._total.toFixed(4))),
         uom: i.uom ?? "",
         estimatedUnitCost: (i.productCode && prices.get(i.productCode)?.unitPrice) || "0",
@@ -901,7 +901,7 @@ export async function getPendingSosForPr(): Promise<PendingSoForPrRow[]> {
   const soIds = rows.map((r) => r.id);
 
   // Keep only SOs that still have something to request: a line its active PRs don't fully ask for
-  // (quantity × sets, per product — an amendment can raise a quantity already on a PR)
+  // (per product — an amendment can raise a quantity already on a PR)
   const covered = await prCoveredQty(orgId, soIds);
   const soItemRows = await db
     .select({ id: salesOrderItem.id, salesOrderId: salesOrderItem.salesOrderId, productCode: salesOrderItem.productCode, qty: salesOrderItem.qty, setGroupId: salesOrderItem.setGroupId, setQty: salesOrderItem.setQty })

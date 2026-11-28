@@ -93,7 +93,7 @@ export async function performStockCheckAndReserve(
           orgId,
           productId: item.productId!,
           warehouseLabel: "Default",
-          delta: soLineQty(item), // × the number of sets
+          delta: soLineQty(item),
         }),
       ),
     );
