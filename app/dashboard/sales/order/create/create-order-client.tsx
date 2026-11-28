@@ -1658,6 +1658,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
 
   // Show CPO column when >1 CPO is linked (items need to know which customer they're for)
   const showCpoColumn = linkedCpos.length > 1;
+  // the items table's Customer column: its header and its cells follow this one rule
+  const hasQuotationCustomers = soType === "standard" && (
+    linkedQuotations.some((q) => q.customerId || q.customerSnapshot) ||
+    linkedCpos.some((c) => c.customerId || c.customerSnapshot)
+  );
   // Unique customer IDs across all linked CPOs
   const cpoCustomerIds = [...new Set(linkedCpos.map((c) => c.customerId).filter(Boolean))];
   const multiCustomerSo = cpoCustomerIds.length > 1;
@@ -2675,7 +2680,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                   <th className="text-left align-bottom pb-2 pr-2 w-14 uppercase">UOM</th>
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Unit price</th>}
                   {soType !== "proforma" && <th className="text-right align-bottom pb-2 pr-2 w-24 uppercase">Total unit price</th>}
-                  {soType === "standard" && linkedQuotations.some((q) => q.customerId || q.customerSnapshot) && (
+                  {hasQuotationCustomers && (
                     <th className="text-left align-bottom pb-2 pr-2 w-28 uppercase">Customer</th>
                   )}
                   <th className="w-14" />
@@ -2683,10 +2688,6 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               </thead>
               <tbody>
                 {(() => {
-                  const hasQuotationCustomers = soType === "standard" && (
-                    linkedQuotations.some((q) => q.customerId || q.customerSnapshot) ||
-                    linkedCpos.some((c) => c.customerId || c.customerSnapshot)
-                  );
                   const colCount = 5 + (soType !== "proforma" ? 2 : 0) + (hasQuotationCustomers ? 1 : 0) + (showSourcing ? 3 : 0) + 1;
                   // Build color index map: each unique groupId or cpoId gets a rotating palette entry
                   // Avoid: green/emerald (from-CPO tag), amber/yellow (edited tag), blue/sky (CPO badge)

@@ -521,8 +521,9 @@ export function SalesOrderDetailClient({
                       <th className="text-right align-middle py-1.5 pr-3 w-24 text-[10px] tracking-wider font-medium uppercase">Unit price</th>
                       <th className="text-right align-middle py-1.5 pr-3 w-14 text-[10px] tracking-wider font-medium uppercase">Disc%</th>
                       <th className="text-right align-middle py-1.5 pr-4 w-24 text-[10px] tracking-wider font-medium uppercase">Total</th>
-                      {can("sales-order:update") && status === "confirmed" && (
-                        <th className="py-1.5 w-8" />
+                      {/* the approver's reject-item buttons */}
+                      {can("sales-order:approve") && status === "submitted" && (
+                        <th className="py-1.5 w-8"><span className="sr-only">Reject item</span></th>
                       )}
                     </tr>
                   </thead>
