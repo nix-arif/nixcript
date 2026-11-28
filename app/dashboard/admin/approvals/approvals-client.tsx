@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -13,7 +13,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
-import { ShieldCheckIcon, ChevronDownIcon, XIcon, PlusIcon, CrownIcon, BuildingIcon } from "lucide-react";
+import { ShieldCheckIcon, ChevronDownIcon, XIcon, PlusIcon, CrownIcon, BuildingIcon, ShoppingCartIcon, PackageIcon, BoxesIcon, UsersIcon } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ApprovalMember, CrossOrgApprovalMember } from "@/server/approvals";
 import { OPTIONAL_APPROVAL_KEYS, type ApprovalModule } from "@/lib/approvals/constants";
 import { setApprovalPermission, setCrossOrgApprovalPermission } from "@/server/approvals";
@@ -27,6 +28,14 @@ interface Props {
   /** { approve key: needs approval } for the documents whose approval can be switched off */
   approvalRequired: Record<string, boolean>;
 }
+
+// The approval modules by area, one tab each (a module not listed in any shows under "Other")
+const APPROVAL_TABS = [
+  { id: "sales", label: "Sales", icon: ShoppingCartIcon, modules: ["sales"] },
+  { id: "procurement", label: "Procurement", icon: PackageIcon, modules: ["purchase-requisition", "procurement", "packing-list"] },
+  { id: "inventory", label: "Inventory", icon: BoxesIcon, modules: ["inventory"] },
+  { id: "hr", label: "HR & Finance", icon: UsersIcon, modules: ["leave", "claim", "travel", "sponsorship", "payroll"] },
+];
 
 function initials(name: string) {
   return name
@@ -42,6 +51,17 @@ export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionS
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [pending, setPending] = useState<string | null>(null); // "userId:permKey" or "self:permKey" or "userId:orgId:permKey"
+  const listed = new Set(APPROVAL_TABS.flatMap((t) => t.modules));
+  const others = modules.filter((m) => !listed.has(m.id)).map((m) => m.id as string);
+  const tabs = others.length > 0 ? [...APPROVAL_TABS, { id: "other", label: "Other", icon: ShieldCheckIcon, modules: others }] : APPROVAL_TABS;
+  const fromUrl = useSearchParams().get("tab");
+  const [tab, setTab] = useState(() => (tabs.some((t) => t.id === fromUrl) ? fromUrl! : tabs[0].id));
+  function changeTab(next: string) {
+    setTab(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    window.history.replaceState(null, "", url);
+  }
 
   async function handleToggle(userId: string, permKey: string, currentAllowed: boolean) {
     const key = `${userId}:${permKey}`;
@@ -112,7 +132,27 @@ export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionS
       </div>
 
       {/* Module sections */}
-      {modules.map((mod) => (
+      {/* Modules, by area: one tab each (the tab is kept in the address, ?tab=) */}
+      <Tabs value={tab} onValueChange={changeTab}>
+        <TabsList className="flex-wrap">
+          {tabs.map((t) => {
+            const mods = modules.filter((m) => t.modules.includes(m.id));
+            if (mods.length === 0) return null;
+            const off = mods.flatMap((m) => m.permissions.map((p) => p.key))
+              .filter((k) => k in OPTIONAL_APPROVAL_KEYS && approvalRequired[k] === false).length;
+            return (
+              <TabsTrigger key={t.id} value={t.id}>
+                <t.icon className="h-3.5 w-3.5" />
+                {t.label}
+                <span className="rounded bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">{mods.length}</span>
+                {off > 0 && <span className="rounded bg-amber-100 px-1.5 text-[10px] text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title="No approval needed for a document here">{off} off</span>}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+        {tabs.map((t) => (
+          <TabsContent key={t.id} value={t.id} className="mt-4 flex flex-col gap-6">
+            {modules.filter((m) => t.modules.includes(m.id)).map((mod) => (
         <div key={mod.id} className="rounded-lg border border-border overflow-hidden">
           {/* Module header */}
           <div className="px-5 py-3.5 bg-muted/40 border-b border-border">
@@ -328,7 +368,10 @@ export function ApprovalsClient({ members, crossOrgMembers, modules, selfActionS
             })}
           </div>
         </div>
-      ))}
+            ))}
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 }
