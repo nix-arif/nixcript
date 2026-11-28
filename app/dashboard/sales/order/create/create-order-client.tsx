@@ -3,6 +3,8 @@
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
+import { SubstituteProductAction } from "@/app/dashboard/sales/order/_shared/substitute-product";
+import { substitutePatch } from "@/lib/sales-order/substitute";
 import { orderAssociates } from "@/app/dashboard/sales/order/_shared/sales-persons";
 import { needsSourcing, missingOemDetails, sourcingProblems } from "@/app/dashboard/sales/order/_shared/sourcing";
 import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
@@ -144,6 +146,8 @@ interface LineItem extends SalesOrderItemInput {
   _editedBy?: string | null;
   _soEditedBy?: string | null;
   _isAdditional?: boolean;
+  // the code this row's product is supplied in place of
+  substitutedFromCode?: string | null;
   _dbDescription?: string | null; // description in the product database (see useDbDescriptions)
   _dbRef?: string;
   _quotationNo?: string; // quotation number shown in the "from quotation …" badge (display only)
@@ -2907,7 +2911,18 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           } : { productId: undefined, productCode: code, _codeSource: ["so"] })}
                         />
                       ) : (
-                        <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
+                        <>
+                          <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
+                          {item.productCode && (
+                            <SubstituteProductAction
+                              rowNo={item.rowNo}
+                              currentCode={item.productCode}
+                              currentUom={item.uom}
+                              substitutedFromCode={item.substitutedFromCode}
+                              onSubstitute={(p) => updateItem(item._key, substitutePatch(item, p, currentUserName))}
+                            />
+                          )}
+                        </>
                       )}
                       <Tag src={item._codeSource} />
                       {/* any row Submit asks sourcing for: one with a description or a code */}

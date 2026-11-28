@@ -253,7 +253,8 @@ export async function planCustomerPoAmendment(
   // match them to the SO's lines: same product code (or description), in order
   const queues = new Map<string, SoItemRow[]>();
   for (const o of mine) {
-    const k = keyOf(o);
+    // a substituted line answers to the code the customer PO has; the quantities below stay on its own code
+    const k = keyOf({ productCode: o.substitutedFromCode || o.productCode, description: o.description });
     queues.set(k, [...(queues.get(k) ?? []), o]);
   }
   const ops: SoOps = { update: [], insert: [], remove: [] };

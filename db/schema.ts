@@ -2556,6 +2556,8 @@ export const salesOrderItem = pgTable(
     editedBy: text("edited_by"),
     soEditedBy: text("so_edited_by"),
     isAdditional: boolean("is_additional").notNull().default(false),
+    // a substitute product: the code it is supplied in place of (lib/sales-order/substitute.ts)
+    substitutedFromCode: text("substituted_from_code"),
     prExcluded: boolean("pr_excluded").notNull().default(false),
     approvalRejected: boolean("approval_rejected").notNull().default(false),
     approvalRejectedBy: text("approval_rejected_by"),

@@ -228,6 +228,7 @@ export interface SalesOrderItemInput {
   editedBy?: string | null;
   soEditedBy?: string | null;
   isAdditional?: boolean;
+  substitutedFromCode?: string | null;
 }
 
 export interface CreateSalesOrderInput {
@@ -748,6 +749,7 @@ async function applyCreateSalesOrder(orgId: string, userId: string, input: Creat
         editedBy: item.editedBy ?? null,
         soEditedBy: item.soEditedBy ?? null,
         isAdditional: item.isAdditional ?? false,
+        substitutedFromCode: item.substitutedFromCode ?? null,
       })),
     );
     await fillSalesOrderItemCustomers(row.id);
@@ -1129,6 +1131,7 @@ async function applySalesOrderUpdate(
         editedBy: item.editedBy ?? null,
         soEditedBy: item.soEditedBy ?? null,
         isAdditional: item.isAdditional ?? false,
+        substitutedFromCode: item.substitutedFromCode ?? null,
       })),
     );
     await fillSalesOrderItemCustomers(input.id);

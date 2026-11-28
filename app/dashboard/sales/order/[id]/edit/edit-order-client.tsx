@@ -4,6 +4,8 @@ import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
+import { SubstituteProductAction } from "@/app/dashboard/sales/order/_shared/substitute-product";
+import { substitutePatch } from "@/lib/sales-order/substitute";
 import { orderAssociates, quotationPeople, reconcileQuotationSalesPersons } from "@/app/dashboard/sales/order/_shared/sales-persons";
 
 type SoQuotation = NonNullable<UpdateSalesOrderInput["linkedQuotations"]>[number];
@@ -104,6 +106,8 @@ interface LineItem extends SalesOrderItemInput {
   _editedBy?: string | null;
   _soEditedBy?: string | null;
   _isAdditional?: boolean;
+  // the code this row's product is supplied in place of
+  substitutedFromCode?: string | null;
   _dbDescription?: string | null; // description in the product database (see useDbDescriptions)
   _dbRef?: string;
 }
@@ -521,6 +525,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           _editedBy: (i as any).editedBy ?? null,
           _soEditedBy: (i as any).soEditedBy ?? null,
           _isAdditional: (i as any).isAdditional === true,
+          substitutedFromCode: i.substitutedFromCode ?? null,
         }))
       : [newLine(1)],
   );
@@ -1876,7 +1881,18 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           } : { productId: undefined, productCode: code, _codeSource: ["so"] })}
                         />
                       ) : (
-                        <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
+                        <>
+                          <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
+                          {item.productCode && !order.sourcePurchaseOrderId && (
+                            <SubstituteProductAction
+                              rowNo={item.rowNo}
+                              currentCode={item.productCode}
+                              currentUom={item.uom}
+                              substitutedFromCode={item.substitutedFromCode}
+                              onSubstitute={(p) => updateItem(item._key, substitutePatch(item, p, currentUserName))}
+                            />
+                          )}
+                        </>
                       )}
                       <SrcTag src={item._codeSource} item={item} />
                       {/* any row Submit asks sourcing for: one with a description or a code */}

@@ -717,6 +717,11 @@ export function SalesOrderDetailClient({
                             <td className={`py-2 pl-4 pr-3 align-top ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.rowNo}</td>
                             <td className={`py-2 pr-3 align-top ${arCls}`}>
                               <div className={`font-mono ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.productCode || "—"}</div>
+                              {item.substitutedFromCode && (
+                                <span className="inline-block mt-0.5 text-[0.625rem] rounded border border-amber-300 bg-amber-50 px-1 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                                  in place of {item.substitutedFromCode}
+                                </span>
+                              )}
                               {((item as any).codeSource ?? []).includes("quotation") && (
                                 <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800">
                                   <LinkIcon className="w-3 h-3 shrink-0" />from quotation
