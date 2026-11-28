@@ -4,7 +4,9 @@ import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
-import { orderAssociates } from "@/app/dashboard/sales/order/_shared/sales-persons";
+import { orderAssociates, quotationPeople, reconcileQuotationSalesPersons } from "@/app/dashboard/sales/order/_shared/sales-persons";
+
+type SoQuotation = NonNullable<UpdateSalesOrderInput["linkedQuotations"]>[number];
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -16,8 +18,7 @@ import {
   updateSalesOrder,
   deleteSalesOrder,
   type SalesOrderItemInput,
-  type SalesOrderWithItems,
-} from "@/server/sales-order";
+  type SalesOrderWithItems, type UpdateSalesOrderInput } from "@/server/sales-order";
 import { getCustomers } from "@/server/customer";
 import {
   getCustomerPoForSoCreate,
@@ -382,6 +383,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   // ── Urgent auth fields ───────────────────────────────────────────────────────
   const isUrgent = order.soType === "urgent";
   const isNonStandard = order.soType !== "standard";
+  // the quotations as the order had them when the form opened: their sales people follow the list below
+  const [savedQuotations] = useState(() => (order.linkedQuotations as SoQuotation[] | null) ?? []);
   const [urgentAuthType, setUrgentAuthType] = useState<"verbal" | "email" | "loi" | "internal">(
     ((order as any).urgentAuthType as "verbal" | "email" | "loi" | "internal") ?? "verbal",
   );
@@ -413,6 +416,14 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       const m = members.find(x => x.userId === a.id);
       list.push({ id: a.id, name: a.name, isExt: !m });
     });
+    // anyone kept only on a quotation (orders saved before the order's list had them all)
+    if (order.soType !== "standard") {
+      quotationPeople((order.linkedQuotations as SoQuotation[] | null) ?? []).forEach((p) => {
+        if (list.some((x) => x.name.trim().toLowerCase() === p.name.trim().toLowerCase())) return;
+        const m = members.find(x => x.userId === p.id || (x.name ?? x.email)?.toLowerCase() === p.name.toLowerCase());
+        list.push({ id: m?.userId ?? p.id, name: p.name, isExt: !m });
+      });
+    }
     return list;
   });
   const [cpoSalesPersons, setCpoSalesPersons] = useState<Record<string, { id: string; name: string; isExt: boolean }[]>>(() => {
@@ -903,6 +914,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           })
         : undefined,
       status,
+      linkedQuotations: isNonStandard && linkedCpos.length === 0 && savedQuotations.length > 0
+        ? reconcileQuotationSalesPersons(savedQuotations, salesPersons)
+        : undefined,
       salesPersonName: linkedCpos.length > 0
         ? (cpoSalesPersons[linkedCpos[0]?.id]?.[0]?.name || undefined)
         : (salesPersons[0]?.name || undefined),

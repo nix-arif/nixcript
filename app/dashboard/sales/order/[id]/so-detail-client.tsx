@@ -1481,7 +1481,7 @@ export function SalesOrderDetailClient({
 
               // Urgent/proforma SO — always show per-quotation rows (with or without CPOs)
               if (order.soType !== "standard") {
-                const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; salesPersonName?: string | null }[] | null) ?? [];
+                const orderLqs = (order.linkedQuotations as { id: string; quotationNo: string; customerId?: string | null; customerSnapshot?: { title?: string; name: string; organizationName?: string } | null; salesPersonName?: string | null; associateSalesPersons?: { id: string; name: string }[] | null }[] | null) ?? [];
                 if (orderLqs.length > 0) {
                   const rows = orderLqs.map((qt) => {
                     const matchingCpo = order.cpoCustomers.find((c) =>
@@ -1491,7 +1491,7 @@ export function SalesOrderDetailClient({
                     const effectiveSp = matchingCpo
                       ? (matchingCpo.soSalesPersonName ?? matchingCpo.salesPersonName ?? null)
                       : (qt.salesPersonName ?? linkedQuotations.find((q) => q.id === qt.id)?.salesPersonName ?? null);
-                    const externalPersons = matchingCpo?.externalPersons ?? [];
+                    const externalPersons = matchingCpo ? matchingCpo.externalPersons : (qt.associateSalesPersons ?? []);
                     return { qt, effectiveSp, externalPersons };
                   });
                   const anyData = rows.some((r) => r.effectiveSp || r.externalPersons.length > 0);

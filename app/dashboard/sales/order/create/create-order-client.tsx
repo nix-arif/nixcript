@@ -903,7 +903,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       // Auto-fill per-quotation sales person for urgent/proforma SO
       if (soType !== "standard" && qt.salesPersonName && !qtSalesPersons[qt.id]?.length) {
         const m = members.find((x) => (x.name ?? x.email)?.toLowerCase() === qt.salesPersonName!.toLowerCase());
-        setQtSalesPersons((prev) => ({ ...prev, [qt.id]: [{ id: m?.userId ?? `sp-${qt.salesPersonName}`, name: qt.salesPersonName!, isExt: !m }] }));
+        const others = ((qt.associateSalesPersons ?? []) as { id: string; name: string }[])
+          .map((a) => ({ id: a.id, name: a.name, isExt: !members.find((x) => x.userId === a.id) }));
+        setQtSalesPersons((prev) => ({ ...prev, [qt.id]: [{ id: m?.userId ?? `sp-${qt.salesPersonName}`, name: qt.salesPersonName!, isExt: !m }, ...others] }));
       }
       // Auto-populate delivery address from customerSnapshot for urgent/proforma SO
       if (soType !== "standard") {
@@ -1447,6 +1449,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
             ? linkedQuotations.map((qt) => ({
                 ...qt,
                 salesPersonName: qtSalesPersons[qt.id]?.[0]?.name ?? qt.salesPersonName ?? null,
+                // with a customer PO, the others are kept on its link instead
+                associateSalesPersons: linkedCpos.length > 0 ? undefined : (qtSalesPersons[qt.id] ?? []).slice(1).map(({ id, name }) => ({ id, name })),
                 deliveryDate: qtDeliveryDates[qt.id] ?? null,
                 deliveryAddress: qtDeliveryAddresses[qt.id] ?? null,
               }))
@@ -1460,6 +1464,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       associateSalesPersons: (() => {
         if (linkedCpos.length > 0) {
           const all = orderAssociates(linkedCpos.map((c) => cpoSalesPersons[c.id] ?? []));
+          return all.length > 0 ? all : undefined;
+        }
+        // urgent / pro-forma without a CPO: the people are chosen per quotation
+        if (soType !== "standard" && linkedQuotations.length > 0) {
+          const all = orderAssociates(linkedQuotations.map((qt) => qtSalesPersons[qt.id] ?? []));
           return all.length > 0 ? all : undefined;
         }
         return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
