@@ -1,5 +1,6 @@
 "use client";
 
+import { CostSource, type PriceSource } from "@/components/cost-source";
 import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
 import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { DocRevBadge, AmendedAfterNote } from "@/components/amendment-history";
@@ -17,6 +18,7 @@ import {
   deletePurchaseRequisition,
   recallPurchaseRequisition,
   purchaseRequisitionBlockers,
+  getPrPriceSources,
   updatePurchaseRequisition,
   searchSuppliersForPr,
   type PrWithItems,
@@ -289,6 +291,13 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
   const handleFieldNavKeyDown = useArrowFieldNav(formRef);
 
   const can = (p: string) => hasAccess(permissions, p);
+  // where each estimated cost came from (shown under it)
+  const [priceSources, setPriceSources] = useState<Record<string, PriceSource> | null>(null);
+  useEffect(() => {
+    let live = true;
+    getPrPriceSources(pr.id).then((r) => { if (live) setPriceSources(r); }).catch(() => {});
+    return () => { live = false; };
+  }, [pr.id]);
   const isOwner = pr.requestedBy === currentUserId;
   const canEdit = can("purchase-requisition:update") && pr.status === "draft";
   const canSubmit = can("purchase-requisition:create") && pr.status === "draft" && (isOwner || can("purchase-requisition:update"));
@@ -680,7 +689,10 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
                         {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </td>
-                    <td className="px-2 py-1.5"><AccountingInput value={line.estimatedUnitCost ?? "0"} onValueChange={(raw) => setLine(line._key, { estimatedUnitCost: raw })} className="h-7 text-xs" /></td>
+                    <td className="px-2 py-1.5">
+                      <AccountingInput value={line.estimatedUnitCost ?? "0"} onValueChange={(raw) => setLine(line._key, { estimatedUnitCost: raw })} className="h-7 text-xs" />
+                      <CostSource code={line.productCode} cost={line.estimatedUnitCost} currency={line.currency} sources={priceSources} />
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium">
                       <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>
                       {calcTotal(line).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
@@ -726,7 +738,10 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
                       <td className="px-3 py-2.5 tabular-nums">{item.qty}</td>
                       <td className="px-3 py-2.5 text-muted-foreground">{item.uom || "—"}</td>
                       <td className="px-3 py-2.5 text-xs font-medium">{item.currency ?? "MYR"}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">{parseFloat(item.estimatedUnitCost ?? "0").toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {parseFloat(item.estimatedUnitCost ?? "0").toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                        <CostSource code={item.productCode} cost={item.estimatedUnitCost} currency={item.currency} sources={priceSources} align="right" />
+                      </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-medium">
                         <span className="text-[10px] text-muted-foreground mr-0.5">{item.currency ?? "MYR"}</span>
                         {total.toLocaleString("en-MY", { minimumFractionDigits: 2 })}

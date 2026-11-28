@@ -1,5 +1,7 @@
 "use client";
 
+import { CostSource, type PriceSource } from "@/components/cost-source";
+import { getPoPriceSources } from "@/server/purchase-order";
 import { OrderProgressBadge } from "@/components/so-stock-chip";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { pricingMethodLabel } from "@/lib/intercompany/methods";
@@ -304,6 +306,13 @@ export function PurchaseOrderDetailClient({
 }) {
   const showSourcing = businessType !== "trading";
   const router = useRouter();
+  // where each unit price compares: what was last paid for the product (shown under it)
+  const [priceSources, setPriceSources] = useState<Record<string, PriceSource> | null>(null);
+  useEffect(() => {
+    let live = true;
+    getPoPriceSources(order.id).then((r) => { if (live) setPriceSources(r); }).catch(() => {});
+    return () => { live = false; };
+  }, [order.id]);
   const [status, setStatus] = useState(order.status ?? "confirmed");
   const [poNo, setPoNo] = useState(order.poNo);
   const [actioning, setActioning] = useState<string | null>(null);
@@ -778,7 +787,10 @@ export function PurchaseOrderDetailClient({
                         {!hidePricing && (
                           <>
                             <td className="py-2 pr-3 align-top font-mono text-muted-foreground">{item.currency || "MYR"}</td>
-                            <td className="py-2 pr-3 align-top text-right tabular-nums">{Number(item.unitPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
+                            <td className="py-2 pr-3 align-top text-right tabular-nums">
+                              {Number(item.unitPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
+                              <CostSource code={item.productCode} cost={item.unitPrice} currency={item.currency ?? order.currency} sources={priceSources} align="right" />
+                            </td>
                             <td className="py-2 align-top text-right tabular-nums font-medium">{Number(item.totalPrice ?? 0).toLocaleString("en-MY", { minimumFractionDigits: 2 })}</td>
                           </>
                         )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { getPoPriceSources } from "@/server/purchase-order";
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -167,6 +168,26 @@ export function EditPurchaseOrderClient({
   const [items, setItems] = useState<LineItem[]>(
     order.items.length > 0 ? order.items.map(orderItemToLine) : [newLine(1)],
   );
+
+  // each line's price compared with what was last paid for the product (shown under it, until typed over)
+  useEffect(() => {
+    let live = true;
+    getPoPriceSources(order.id).then((src) => {
+      if (!live) return;
+      const fmtP = (p: { unitPrice: string; currency: string }) => `${p.currency} ${Number(p.unitPrice).toLocaleString("en-MY", { minimumFractionDigits: 2 })}`;
+      setItems((prev) => prev.map((l) => {
+        if (l._priceTyped || l._priceSource) return l;
+        const p = l.productCode ? src[l.productCode.trim()] : undefined;
+        const v = Number(l.unitPrice || 0);
+        const text = !p ? (v > 0 ? "entered by hand" : "no price history")
+          : v > 0 && Math.abs(v - Number(p.unitPrice)) < 0.005 && p.currency === (l.currency ?? order.currency) ? p.label
+          : `${v > 0 ? "entered by hand · " : ""}last paid ${fmtP(p)}`;
+        return { ...l, _priceSource: text };
+      }));
+    }).catch(() => {});
+    return () => { live = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order.id]);
 
   // PDF
   const [pdfFile, setPdfFile] = useState<File | null>(null);

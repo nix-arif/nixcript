@@ -31,7 +31,7 @@ const positive = (v: string | null | undefined) => Number(v ?? 0) > 0;
 export async function lastPurchasePrices(
   orgIds: string[],
   codes: (string | null | undefined)[],
-  opts: { supplierId?: string | null; currency?: string | null } = {},
+  opts: { supplierId?: string | null; currency?: string | null; excludePoId?: string | null } = {},
 ): Promise<Map<string, LastPrice>> {
   const wanted = [...new Set(codes.filter((c): c is string => !!c && !!c.trim()))];
   const out = new Map<string, LastPrice>();
@@ -54,6 +54,8 @@ export async function lastPurchasePrices(
     .where(and(
       inArray(purchaseOrder.organizationId, orgIds),
       inArray(purchaseOrder.status, ["confirmed", "fulfilled"]),
+      // a PO's own price is not what was "last paid" for it
+      ...(opts.excludePoId ? [sql`${purchaseOrder.id} <> ${opts.excludePoId}`] : []),
       sql`lower(trim(${purchaseOrderItem.productCode})) in ${[...byNorm.keys()]}`,
     ))
     .orderBy(desc(sql`coalesce(${purchaseOrder.poDate}::timestamp, ${purchaseOrder.createdAt})`));

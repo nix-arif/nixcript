@@ -383,6 +383,22 @@ export async function getLastPurchasePrices(codes: string[], supplierId: string 
   return Object.fromEntries(prices);
 }
 
+/** Where a saved supplier PO's prices compare: what was last paid for each product (its supplier's first), this PO left out */
+export async function getPoPriceSources(poId: string): Promise<Record<string, { unitPrice: string; currency: string; label: string }>> {
+  const { orgId } = await requireAccess("purchase-order:read").catch(() => requireAccess("purchase-order:read:centralized"));
+  const ownerOrgIds = await getOwnerOrgIds(orgId);
+  const [po] = await db.select({ supplierId: purchaseOrder.supplierId }).from(purchaseOrder)
+    .where(and(eq(purchaseOrder.id, poId), inArray(purchaseOrder.organizationId, ownerOrgIds)));
+  if (!po) return {};
+  const items = await db.select({ code: purchaseOrderItem.productCode }).from(purchaseOrderItem).where(eq(purchaseOrderItem.purchaseOrderId, poId));
+  const prices = await lastPurchasePrices(ownerOrgIds, items.map((i) => i.code), { supplierId: po.supplierId, excludePoId: poId });
+  return Object.fromEntries([...prices].map(([code, p]) => [code, {
+    unitPrice: p.unitPrice,
+    currency: p.currency,
+    label: p.source === "catalog" ? "catalog cost" : [p.poNo, p.supplierName, p.date].filter(Boolean).join(" · "),
+  }]));
+}
+
 // ── PR → PO conversion helper ─────────────────────────────────────────────
 
 export type PrForPoConversion = {

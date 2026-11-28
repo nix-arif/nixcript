@@ -24,7 +24,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
-import { soLineQty, soLineQtyText } from "@/lib/sales-order/set-qty";
+import { soLineSets, soLineQty, soLineQtyText } from "@/lib/sales-order/set-qty";
 import { prCoveredQty, remainingPerLine } from "@/lib/purchase-requisition/coverage";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, notInArray, isNotNull, isNull, ne, ilike, or } from "drizzle-orm";
@@ -657,6 +657,26 @@ export async function getCposForSo(soId: string): Promise<{
     .orderBy(asc(customerPurchaseOrder.createdAt));
 }
 
+/**
+ * Where a PR's estimated costs come from, for its page: per product code, what was last paid for it
+ * (lib/procurement/last-price.ts — the newest issued supplier PO of any of the owner's companies, else
+ * the catalog cost). The page compares it with each line's estimate (the same: filled in from it).
+ */
+export async function getPrPriceSources(prId: string): Promise<Record<string, { unitPrice: string; currency: string; label: string }>> {
+  const { orgId } = await requireAccess("purchase-requisition:read");
+  const items = await db
+    .select({ code: purchaseRequisitionItem.productCode })
+    .from(purchaseRequisitionItem)
+    .innerJoin(purchaseRequisition, eq(purchaseRequisition.id, purchaseRequisitionItem.purchaseRequisitionId))
+    .where(and(eq(purchaseRequisition.id, prId), eq(purchaseRequisition.organizationId, orgId)));
+  const prices = await lastPurchasePrices(await getOwnerOrgIds(orgId), items.map((i) => i.code));
+  return Object.fromEntries([...prices].map(([code, p]) => [code, {
+    unitPrice: p.unitPrice,
+    currency: p.currency,
+    label: p.source === "catalog" ? "catalog cost" : [p.poNo, p.supplierName, p.date].filter(Boolean).join(" · "),
+  }]));
+}
+
 export async function getSoItemsForPr(soId: string) {
   const { orgId } = await requireAccess("purchase-requisition:read");
   const [so] = await db
@@ -751,10 +771,15 @@ export async function getSoItemsForPr(soId: string) {
   const remaining = remainingPerLine(live, (await prCoveredQty(orgId, [soId])).get(soId));
   const filteredItems = live
     .filter((i) => (remaining.get(i.id) ?? 0) > 1e-9)
-    // a line partly covered: the part still to request (in a set it's already the total, as 1 lot)
+    // a line partly covered: the part still to request. In a set it stays per set (× the SO's sets) when
+    // it divides evenly; otherwise the line is the total, its set as 1 lot
     .map((i) => {
       const left = remaining.get(i.id)!;
-      return Math.abs(left - soLineQty(i)) > 1e-9 ? { ...i, qty: String(Number(left.toFixed(4))), setQty: i.setGroupId ? "1" : i.setQty } : i;
+      if (Math.abs(left - soLineQty(i)) <= 1e-9) return i;
+      const sets = soLineSets(i);
+      if (i.setGroupId && sets > 1 && Math.abs(left / sets - Math.round(left / sets)) < 1e-9)
+        return { ...i, qty: String(Math.round(left / sets)) };
+      return { ...i, qty: String(Number(left.toFixed(4))), setQty: i.setGroupId ? "1" : i.setQty };
     });
 
   return {
@@ -767,8 +792,9 @@ export async function getSoItemsForPr(soId: string) {
         productId: i.productId ?? undefined,
         productCode: i.productCode ?? "",
         description: i.description ?? "",
-        // the SO line is for one set: buy for every set (the set keeps its name, as 1 lot)
-        qty: soLineQtyText(i),
+        // as on the SO: a line in a set is for one set, and the set carries how many (the PR's totals, its
+        // coverage of the SO and its supplier PO all multiply them: lib/sales-order/set-qty.ts)
+        qty: i.qty ?? "1",
         uom: i.uom ?? "",
         estimatedUnitCost: (i.productCode && prices.get(i.productCode)?.unitPrice) || "0",
         currency:          (i.productCode && prices.get(i.productCode)?.currency) || "MYR",
@@ -783,7 +809,7 @@ export async function getSoItemsForPr(soId: string) {
         editedBy:             i.editedBy ?? null,
         setGroupId:           i.setGroupId ?? null,
         setGroupLabel:        i.setGroupLabel ?? null,
-        setQty:               i.setGroupId ? "1" : null, // the quantity above is already for every set
+        setQty:               i.setGroupId ? (i.setQty ?? "1") : null,
       };
     }),
   };

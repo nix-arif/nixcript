@@ -1116,8 +1116,9 @@ export function PoItemsTable({
                       placeholder="0.00"
                     />
                     {item._priceSource && (
-                      <p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={item._priceSource === "catalog cost" ? "From the product's catalog cost price" : item._priceSource.startsWith("no ") ? "Enter this line's price" : `What we last paid: ${item._priceSource}`}>
-                        {item._priceSource === "catalog cost" || item._priceSource.startsWith("no ") ? item._priceSource : `last paid · ${item._priceSource}`}
+                      <p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={item._priceSource === "catalog cost" ? "From the product's catalog cost price" : /^[a-z]/.test(item._priceSource) ? item._priceSource : `What we last paid: ${item._priceSource}`}>
+                        {/* a sentence ("entered by hand · last paid …", "no price history", "catalog cost") as is; a source (PO · supplier · date) as "last paid" */}
+                        {/^[a-z]/.test(item._priceSource) ? item._priceSource : `last paid · ${item._priceSource}`}
                       </p>
                     )}
                   </td>
