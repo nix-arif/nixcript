@@ -25,6 +25,7 @@ import {
   UserIcon,
   BuildingIcon,
   PackageIcon,
+  ChevronDownIcon,
 } from "lucide-react";
 import { type CustomerPoSearchResult } from "@/server/customer-purchase-order";
 
@@ -77,6 +78,8 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [selectedCpos, setSelectedCpos] = useState<Set<string>>(new Set());
+  // closed to start with: a long list of waiting CPOs would push the sales orders off the screen
+  const [pendingOpen, setPendingOpen] = useState(false);
 
   function toggleCpo(id: string) {
     setSelectedCpos((prev) => {
@@ -179,18 +182,28 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
 
       {pendingCpos.length > 0 && can("sales-order:create") && (
         <div className="mb-5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-amber-200 dark:border-amber-800">
+          <div className={cn("flex items-center gap-2 px-4 py-2.5", pendingOpen && "border-b border-amber-200 dark:border-amber-800")}>
             <input
               type="checkbox"
+              aria-label="Select all pending customer POs"
               checked={selectedCpos.size === pendingCpos.length}
               ref={(el) => { if (el) el.indeterminate = selectedCpos.size > 0 && selectedCpos.size < pendingCpos.length; }}
               onChange={toggleAllCpos}
-              className="w-3.5 h-3.5 rounded accent-amber-600 cursor-pointer"
+              className="w-3.5 h-3.5 rounded accent-amber-600 cursor-pointer shrink-0"
             />
-            <PackageIcon className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-            <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 flex-1">
-              Pending SO — {pendingCpos.length} CPO{pendingCpos.length !== 1 ? "s" : ""} awaiting Sales Order
-            </span>
+            <button
+              type="button"
+              aria-expanded={pendingOpen}
+              aria-controls="pending-cpos"
+              onClick={() => setPendingOpen((v) => !v)}
+              className="flex flex-1 min-w-0 items-center gap-2 rounded text-left cursor-pointer outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <PackageIcon className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                Pending SO — {pendingCpos.length} CPO{pendingCpos.length !== 1 ? "s" : ""} awaiting Sales Order
+              </span>
+              <ChevronDownIcon className={cn("w-3.5 h-3.5 shrink-0 ml-auto text-amber-600 dark:text-amber-400 transition-transform", pendingOpen && "rotate-180")} />
+            </button>
             {selectedCpos.size > 0 && (
               <Button
                 size="sm"
@@ -201,14 +214,14 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
               </Button>
             )}
           </div>
-          <div className="divide-y divide-amber-100 dark:divide-amber-900">
+          <div id="pending-cpos" hidden={!pendingOpen} className="max-h-80 overflow-y-auto divide-y divide-amber-100 dark:divide-amber-900">
             {pendingCpos.map((cpo) => {
               const snap = cpo.customerSnapshot;
               const checked = selectedCpos.has(cpo.id);
               return (
                 <div
                   key={cpo.id}
-                  className={cn("flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors", checked ? "bg-amber-100/60 dark:bg-amber-900/30" : "hover:bg-amber-50 dark:hover:bg-amber-950/30")}
+                  className={cn("flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 cursor-pointer transition-colors", checked ? "bg-amber-100/60 dark:bg-amber-900/30" : "hover:bg-amber-50 dark:hover:bg-amber-950/30")}
                   onClick={() => toggleCpo(cpo.id)}
                 >
                   <input
@@ -219,8 +232,8 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                     onClick={(e) => e.stopPropagation()}
                     className="w-3.5 h-3.5 rounded accent-amber-600 cursor-pointer shrink-0"
                   />
-                  <div className="flex-1 min-w-0">
-                    <span className="font-mono text-sm font-medium text-foreground">{cpo.customerPoNo}</span>
+                  <div className="flex-1 min-w-0 basis-[calc(100%-2.5rem)] sm:basis-0">
+                    <span className="font-mono text-sm font-medium text-foreground break-words">{cpo.customerPoNo}</span>
                     {snap?.name && (
                       <span className="ml-2 text-[11px] text-muted-foreground">
                         <UserIcon className="w-3 h-3 inline mr-0.5" />{snap.title ? `${snap.title} ` : ""}{snap.name}
@@ -232,7 +245,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                       </span>
                     )}
                   </div>
-                  <span className="text-[11px] tabular-nums font-semibold text-foreground shrink-0">
+                  <span className="ml-auto sm:ml-0 text-[11px] tabular-nums font-semibold text-foreground shrink-0">
                     RM {Number(cpo.amount).toLocaleString("en-MY", { minimumFractionDigits: 2 })}
                   </span>
                   {!checked && (
@@ -324,7 +337,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                 <div className="flex-1 min-w-0 px-4 py-3">
                   {/* Row 1: SO number + status + amount */}
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
                       {/* the number, and its revision below it */}
                       <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
                         {/* a real link, so the order opens from the keyboard and in a new tab */}
@@ -332,7 +345,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                           href={`/dashboard/sales/order/${o.id}`}
                           prefetch={false}
                           onClick={(e) => e.stopPropagation()}
-                          className="font-mono text-sm font-semibold tracking-tight outline-none hover:underline underline-offset-4"
+                          className="font-mono text-sm font-semibold tracking-tight whitespace-nowrap outline-none hover:underline underline-offset-4"
                         >
                           <Highlight text={o.soNo} query={search} />
                         </Link>

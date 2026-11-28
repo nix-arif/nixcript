@@ -210,7 +210,7 @@ export function CentralizedSalesOrderClient({ initialOrders, categories = [] }: 
                           href={`/dashboard/sales/order/centralized/${o.id}`}
                           prefetch={false}
                           onClick={(e) => e.stopPropagation()}
-                          className="font-mono text-sm font-medium outline-none hover:underline underline-offset-4"
+                          className="font-mono text-sm font-medium whitespace-nowrap outline-none hover:underline underline-offset-4"
                         >
                           <Highlight text={o.soNo} query={search} />
                         </Link>
