@@ -578,6 +578,9 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       const po = await createPurchaseOrder({ ...input, asDraft: true, manualPoNo: undefined });
       draftRef.current = { id: po.id, poNo: po.poNo };
       setDraft(draftRef.current);
+      // the server carried on with a draft already started for this PR and supplier (one per pair)
+      if (Date.now() - new Date(po.createdAt).getTime() > 60_000)
+        toast.info(`Saved into your draft ${po.poNo ?? ""} for this PR and supplier, instead of starting another.`.replace("  ", " "), { duration: 8000 });
     }
     committedRef.current = true; // the line images belong to the draft now
     return draftRef.current;

@@ -481,6 +481,16 @@ async function notifyNewCpo(orgId: string, userId: string, cpoId: string, custom
   }
 }
 
+// The lists a customer PO shows in, refreshed after it's saved (a draft too: auto-saves included), so
+// going Back to a list shows it at once instead of only after a reload
+function revalidateCpoLists() {
+  revalidatePath("/dashboard/sales/customer-po");
+  revalidatePath("/dashboard/sales/customer-po/centralized");
+  revalidatePath("/dashboard/sales/customer-po/centralized/intercompany");
+  revalidatePath("/dashboard/sales/customer-po/summary");
+  revalidatePath("/dashboard/sales/order"); // its "pending SO" list
+}
+
 export async function createCustomerPo(input: CreateCustomerPoInput): Promise<CustomerPo> {
   const { orgId, userId } = await requireAccess("customer-po:create");
   const isDraft = input.status === "draft";
@@ -538,6 +548,7 @@ export async function createCustomerPo(input: CreateCustomerPoInput): Promise<Cu
   // A draft is not an order yet: nobody is told until it is recorded
   if (!isDraft) await notifyNewCpo(orgId, userId, row.id, row.customerPoNo, customerSnapshot);
 
+  revalidateCpoLists();
   return row;
 }
 
@@ -677,6 +688,7 @@ async function applyCustomerPoUpdate(existing: CustomerPo, input: UpdateCustomer
   await cascadeCategories("cpo", existing.id, oldCategories, categoryIds);
   // recorded now: tell the sales approvers, as if it had just been received
   if (wasDraft && !staysDraft && nextStatus !== "cancelled") await notifyNewCpo(existing.organizationId, userId, existing.id, newNo, row.customerSnapshot);
+  revalidateCpoLists();
   return row;
 }
 

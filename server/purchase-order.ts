@@ -1395,6 +1395,14 @@ export async function getExistingDraftPo(): Promise<{ id: string; docNo: string 
   return { id: row.id, docNo: row.prNo ?? row.poNo ?? row.id };
 }
 
+// The lists a supplier PO shows in, refreshed after it's saved (a draft too: auto-saves included), so
+// going Back to a list shows it at once instead of only after a reload
+function revalidatePoLists() {
+  revalidatePath("/dashboard/procurement/purchase-order");
+  revalidatePath("/dashboard/procurement/purchase-order/centralized");
+  revalidatePath("/dashboard/procurement/requisition"); // its PR's status and "pending PO" list
+}
+
 export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Promise<PurchaseOrderRow> {
   const { orgId, userId } = await requireAccess("purchase-order:create");
 
@@ -1439,6 +1447,24 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   } : null;
 
   const fromPr = !!input.purchaseRequisitionId;
+
+  // One draft per PR and supplier: opening the form again for them (another tab, coming back to it)
+  // carries on with the draft already started instead of auto-saving a second one
+  if (input.asDraft && fromPr) {
+    const [open] = await db
+      .select()
+      .from(purchaseOrder)
+      .where(and(
+        eq(purchaseOrder.organizationId, orgId),
+        eq(purchaseOrder.purchaseRequisitionId, input.purchaseRequisitionId!),
+        inArray(purchaseOrder.supplierId, [...new Set([input.supplierId, supplierId])]),
+        eq(purchaseOrder.status, "draft"),
+        eq(purchaseOrder.createdBy, userId),
+      ))
+      .orderBy(desc(purchaseOrder.updatedAt))
+      .limit(1);
+    if (open) return applyPurchaseOrderUpdate(open, { ...input, id: open.id });
+  }
 
   // A PO is created confirmed, with its number. A draft (auto-saved from the create form) gets a
   // draft reference instead, and its number when it's confirmed (confirmPurchaseOrder).
@@ -1562,6 +1588,7 @@ export async function createPurchaseOrder(input: CreatePurchaseOrderInput): Prom
   // supplier is linked to a sibling org, this fires the matching SO there.
   await maybeCreateIntercompanySalesOrder(row.id);
 
+  revalidatePoLists();
   return row;
 }
 
@@ -1867,6 +1894,7 @@ async function applyPurchaseOrderUpdate(existing: PurchaseOrderRow, input: Updat
     }
   }
 
+  revalidatePoLists();
   return row;
 }
 
