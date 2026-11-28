@@ -1608,21 +1608,30 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     save: async (input) => { await saveDraft(input); },
   });
 
+  // Cancel (nothing saved yet) and Discard draft: leave without keeping a draft
   async function handleDiscardDraft() {
-    const d = draftRef.current;
-    if (!d) { router.push("/dashboard/sales/order"); return; }
-    if (!confirm(`Discard the draft ${d.soNo}? It will be deleted.`)) return;
+    const shown = draftRef.current;
+    if (shown && !confirm(`Discard the draft ${shown.soNo}? It will be deleted.`)) return;
     setSavingAction("discard");
-    try {
-      await autoSave.flush();
-      const res = await deleteSalesOrder(d.id);
-      if (!res.ok) { toast.error(res.error); return; }
-      toast.success("Draft discarded");
-      router.push("/dashboard/sales/order");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't discard the draft");
-    } finally {
+    // before anything: leaving the form would otherwise save it, and a save in flight could outlive the delete
+    await autoSave.stop();
+    const stay = (message: string) => {
+      toast.error(message);
       setSavingAction(null);
+      autoSave.resume();
+    };
+    // read again: the first save may have made the draft while it was being waited for
+    const d = draftRef.current;
+    try {
+      if (d) {
+        const res = await deleteSalesOrder(d.id);
+        if (!res.ok) return stay(res.error);
+        toast.success("Draft discarded");
+      }
+      // replace: Back mustn't return to the form of a deleted draft
+      router.replace("/dashboard/sales/order");
+    } catch (e) {
+      stay(e instanceof Error ? e.message : "Couldn't discard the draft");
     }
   }
 
@@ -3298,8 +3307,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
               {savingAction === "discard" ? "Discarding…" : "Discard draft"}
             </Button>
           ) : (
-            <Button variant="outline" onClick={() => router.push("/dashboard/sales/order")}>
-              Cancel
+            <Button variant="outline" onClick={handleDiscardDraft} disabled={saving}>
+              {savingAction === "discard" ? "Cancelling…" : "Cancel"}
             </Button>
           )}
         </div>

@@ -39,6 +39,7 @@ export function useAutoSave<T>({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveRef = useRef(save);
   const enabledRef = useRef(enabled);
+  const stoppedRef = useRef(false); // the document is being thrown away: save nothing more
 
   const setSavedKey = useCallback((k: string | null) => {
     savedKeyRef.current = k;
@@ -57,7 +58,7 @@ export function useAutoSave<T>({
     // one save at a time: wait for the one in flight, then save what's newest
     while (running.current) await running.current;
     const { key: k, value: v } = latest.current;
-    if (!enabledRef.current || k === null || v === null || k === savedKeyRef.current) return;
+    if (stoppedRef.current || !enabledRef.current || k === null || v === null || k === savedKeyRef.current) return;
     setStatus("saving");
     const p = (async () => {
       try {
@@ -111,8 +112,24 @@ export function useAutoSave<T>({
     setStatus("saved");
   }, [setSavedKey]);
 
+  /**
+   * Before cancelling or deleting the document: no more saves (not on leaving the page either), and
+   * wait for one already in flight, so it can't land after the delete. resume() undoes it.
+   */
+  const stop = useCallback(async () => {
+    stoppedRef.current = true;
+    if (timer.current) clearTimeout(timer.current);
+    while (running.current) await running.current;
+  }, []);
+
+  /** The cancel or delete didn't happen: save again, starting with anything changed meanwhile. */
+  const resume = useCallback(() => {
+    stoppedRef.current = false;
+    void run();
+  }, [run]);
+
   const dirty = key !== null && savedKey !== undefined && key !== savedKey;
-  return { status, savedAt, error, dirty, flush, markSaved };
+  return { status, savedAt, error, dirty, flush, markSaved, stop, resume };
 }
 
 /** True once the user has clicked or typed on the page: a create form saves a draft only after that. */

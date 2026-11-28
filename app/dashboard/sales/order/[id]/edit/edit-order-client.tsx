@@ -1026,10 +1026,12 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
     if (!confirm(`Delete ${order.soNo}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
+      await autoSave.stop(); // no save may run alongside the delete, or after it
       const res = await deleteSalesOrder(order.id);
       if (!res.ok) {
         toast.error(res.error);
         setDeleting(false);
+        autoSave.resume();
         return;
       }
       toast.success("Sales order deleted");
@@ -1037,6 +1039,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't delete the sales order");
       setDeleting(false);
+      autoSave.resume();
     }
   }
 
@@ -2231,7 +2234,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
 
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
-          <Button onClick={handleSave} disabled={saving} className="gap-2">
+          <Button onClick={handleSave} disabled={saving || deleting} className="gap-2">
             {saving ? "Saving…" : "Save changes"}
           </Button>
           <Button variant="outline" onClick={() => router.push(backHref)}>
