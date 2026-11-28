@@ -1,5 +1,6 @@
 "use client";
 
+import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -1819,7 +1820,27 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                   >
                     <td className={`py-1.5 pr-2 align-top ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"} ${color?.border ?? ""}`}><div className="h-7 flex items-center">{item.rowNo}</div></td>
                     <td className="py-1.5 pr-2 align-top">
-                      <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
+                      {item._isAdditional ? (
+                        // a row added on the SO: its code is typed in and looked up in the product list
+                        <AddedRowCodeInput
+                          value={item.productCode ?? ""}
+                          onChange={(code) => updateItem(item._key, { productCode: code, productId: undefined })}
+                          onResolved={(p, code) => updateItem(item._key, p ? {
+                            productId: p.id,
+                            productCode: p.productCode,
+                            description: item.description?.trim() ? item.description : (p.description ?? "").toUpperCase(),
+                            _descriptionSource: item.description?.trim() ? item._descriptionSource : ["catalog"],
+                            uom: p.uom ?? item.uom,
+                            sourcingType: p.sourcingType ?? item.sourcingType,
+                            designBrandName: item.designBrandName?.trim() ? item.designBrandName : (p.designBrandName ?? ""),
+                            designBrandCode: item.designBrandCode?.trim() ? item.designBrandCode : (p.designBrandCode ?? ""),
+                            privateLabelCode: item.privateLabelCode?.trim() ? item.privateLabelCode : (p.privateLabelCode ?? ""),
+                            _codeSource: ["so"],
+                          } : { productId: undefined, productCode: code, _codeSource: ["so"] })}
+                        />
+                      ) : (
+                        <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
+                      )}
                       <SrcTag src={item._codeSource} item={item} />
                       {showSourcing && item.productCode?.trim() && (
                         item.sourcingType ? (
