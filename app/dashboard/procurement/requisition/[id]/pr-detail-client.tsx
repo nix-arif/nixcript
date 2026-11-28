@@ -369,10 +369,12 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
     if (!confirm(`Delete ${pr.prNo}? This cannot be undone.`)) return;
     setActioning("delete");
     try {
+      await autoSave.stop(); // no save may run alongside the delete, or after it
       const res = await deletePurchaseRequisition(pr.id);
       if (!res.ok) {
         toast.error(res.error);
         setActioning(null);
+        autoSave.resume();
         return;
       }
       toast.success("Requisition deleted");
@@ -381,6 +383,7 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
     } catch (e: any) {
       toast.error(e.message);
       setActioning(null);
+      autoSave.resume();
     }
   }
 

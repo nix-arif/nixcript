@@ -298,7 +298,7 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
   const [notes, setNotes]         = useState("");
   const [linkedSoId, setLinkedSoId] = useState<string | undefined>(initialSoId);
   const [linkedSoNo, setLinkedSoNo] = useState<string | undefined>();
-  const [savingMode, setSavingMode] = useState<"draft" | "submit" | null>(null);
+  const [savingMode, setSavingMode] = useState<"draft" | "submit" | "discard" | null>(null);
   // the company may not need PRs approved (Approvals page): submitting then approves it
   const prNeedsApproval = useApprovalRequired("purchase-requisition:approve");
   const [loadingSo, setLoadingSo] = useState(false);
@@ -595,15 +595,33 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
     save: async (input) => { await saveDraft(input); },
   });
 
+  // Cancel (nothing saved yet) and Discard: leave without keeping a draft
   async function handleDiscardDraft() {
+    const shown = draftRef.current;
+    if (shown && !confirm(`Discard the draft ${shown.prNo}? It will be deleted.`)) return;
+    setSavingMode("discard");
+    // before anything: leaving the form would otherwise save it, and a save in flight could outlive the delete
+    await autoSave.stop();
+    const stay = (message: string) => {
+      toast.error(message);
+      setSavingMode(null);
+      autoSave.resume();
+    };
+    // read again: the first save may have made the draft while it was being waited for
     const d = draftRef.current;
-    if (!d) { router.back(); return; }
-    if (!confirm(`Discard the draft ${d.prNo}? It will be deleted.`)) return;
-    await autoSave.flush();
-    const res = await deletePurchaseRequisition(d.id);
-    if (!res.ok) { toast.error(res.error); return; }
-    toast.success("Draft discarded");
-    router.push("/dashboard/procurement/requisition");
+    try {
+      if (d) {
+        const res = await deletePurchaseRequisition(d.id);
+        if (!res.ok) return stay(res.error);
+        committedRef.current = false; // its images go with it
+        toast.success("Draft discarded");
+      }
+      // replace: Back mustn't return to the form of a deleted draft
+      if (d) router.replace("/dashboard/procurement/requisition");
+      else router.back();
+    } catch (e) {
+      stay(e instanceof Error ? e.message : "Couldn't discard the draft");
+    }
   }
 
   async function handleSave(submit: boolean) {
@@ -1124,8 +1142,8 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
 
       <div className="flex justify-end gap-2 pb-6">
         {draft
-          ? <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={handleDiscardDraft} disabled={savingMode !== null}>Discard draft</Button>
-          : <Button variant="ghost" size="sm" onClick={() => router.back()}>Cancel</Button>}
+          ? <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={handleDiscardDraft} disabled={savingMode !== null}>{savingMode === "discard" ? "Discarding…" : "Discard draft"}</Button>
+          : <Button variant="ghost" size="sm" onClick={handleDiscardDraft} disabled={savingMode !== null}>{savingMode === "discard" ? "Cancelling…" : "Cancel"}</Button>}
         <Button variant="outline" size="sm" onClick={() => handleSave(false)} disabled={savingMode !== null}>
           {savingMode === "draft" ? "Saving…" : "Save as Draft"}
         </Button>

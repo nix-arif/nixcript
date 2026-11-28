@@ -271,6 +271,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
   const pdfRef = useRef<HTMLInputElement>(null);
 
   const [saving, setSaving] = useState(false);
+  const [discarding, setDiscarding] = useState(false); // Cancel / Discard is running
   const interacted = useUserInteracted();
 
   const committedRef = useRef(false);
@@ -619,17 +620,18 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
 
 
   // ── Auto-save: a draft PO (no number yet) is created the first time the form can be saved ──
-  const draftRef = useRef<{ id: string; poNo: string | null } | null>(null);
+  const draftRef = useRef<{ id: string; poNo: string | null; reused?: boolean } | null>(null);
   const [draft, setDraft] = useState<{ id: string; poNo: string | null } | null>(null);
   async function saveDraft(input: Parameters<typeof createPurchaseOrder>[0]): Promise<{ id: string; poNo: string | null }> {
     if (draftRef.current) {
       await updatePurchaseOrder({ ...input, id: draftRef.current.id });
     } else {
       const po = await createPurchaseOrder({ ...input, asDraft: true, manualPoNo: undefined });
-      draftRef.current = { id: po.id, poNo: po.poNo };
-      setDraft(draftRef.current);
       // the server carried on with a draft already started for this PR and supplier (one per pair)
-      if (Date.now() - new Date(po.createdAt).getTime() > 60_000)
+      const reused = Date.now() - new Date(po.createdAt).getTime() > 60_000;
+      draftRef.current = { id: po.id, poNo: po.poNo, reused };
+      setDraft(draftRef.current);
+      if (reused)
         toast.info(`Saved into your draft ${po.poNo ?? ""} for this PR and supplier, instead of starting another.`.replace("  ", " "), { duration: 8000 });
     }
     committedRef.current = true; // the line images belong to the draft now
@@ -654,20 +656,34 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
     return confirmPurchaseOrder(draftRef.current.id, r.input.manualPoNo);
   }
 
+  // Cancel (nothing saved yet) and Discard: leave without keeping a draft
   async function handleDiscardDraft() {
-    const d = draftRef.current;
-    if (!d) { router.push(backHref); return; }
-    if (!confirm(`Discard the draft ${d.poNo ?? ""}? It will be deleted.`.replace("  ", " "))) return;
+    const shown = draftRef.current;
+    if (shown && !confirm(`Discard the draft ${shown.poNo ?? ""}? It will be deleted.`.replace("  ", " "))) return;
     setSaving(true);
-    try {
-      await autoSave.flush();
-      const res = await deletePurchaseOrder(d.id);
-      if (!res.ok) { toast.error(res.error); return; }
-      committedRef.current = false; // its images go with it
-      toast.success("Draft discarded");
-      router.push(backHref);
-    } finally {
+    setDiscarding(true);
+    // before anything: leaving the form would otherwise save it, and a save in flight could outlive the delete
+    await autoSave.stop();
+    const stay = (message: string) => {
+      toast.error(message);
       setSaving(false);
+      setDiscarding(false);
+      autoSave.resume();
+    };
+    // read again: the first save may have made the draft while it was being waited for
+    const d = draftRef.current;
+    try {
+      // on Cancel, a draft the server already had for this PR and supplier isn't this form's to delete
+      if (d && (shown || !d.reused)) {
+        const res = await deletePurchaseOrder(d.id);
+        if (!res.ok) return stay(res.error);
+        committedRef.current = false; // its images go with it
+        toast.success("Draft discarded");
+      }
+      // replace: Back mustn't return to the form of a deleted draft
+      router.replace(backHref);
+    } catch (e) {
+      stay(e instanceof Error ? e.message : "Couldn't discard the draft");
     }
   }
 
@@ -1145,10 +1161,10 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
           </Button>
           {draft ? (
             <Button variant="outline" onClick={handleDiscardDraft} disabled={saving} className="text-destructive hover:text-destructive">
-              Discard draft
+              {discarding ? "Discarding…" : "Discard draft"}
             </Button>
           ) : (
-            <Button variant="outline" onClick={() => router.push(backHref)}>Cancel</Button>
+            <Button variant="outline" onClick={handleDiscardDraft} disabled={saving}>{discarding ? "Cancelling…" : "Cancel"}</Button>
           )}
         </div>
         <div className="-mt-6 pb-8">
