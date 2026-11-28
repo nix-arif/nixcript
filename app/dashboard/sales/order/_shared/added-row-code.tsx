@@ -58,7 +58,7 @@ export function AddedRowCodeInput({ value, onChange, onResolved, dataRow, dataCo
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onBlur={lookUp}
-      onKeyDown={(e) => { if (e.key === "Enter") lookUp(); onKeyDown?.(e); }}
+      onKeyDown={(e) => { if (e.key === "Enter") void lookUp(); onKeyDown?.(e); }}
       placeholder="Code"
       data-row={dataRow}
       data-col={dataCol}

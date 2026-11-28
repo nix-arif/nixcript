@@ -2,6 +2,7 @@
 
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
+import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -541,6 +542,25 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // moves one row to another's place (dragging and the arrow keys)
+  function reorderItem(fromKey: string, toKey: string) {
+    setItems((prev) => {
+      const from = prev.findIndex((i) => i._key === fromKey);
+      const to   = prev.findIndex((i) => i._key === toKey);
+      if (from < 0 || to < 0) return prev;
+      const arr = [...prev];
+      arr.splice(to, 0, arr.splice(from, 1)[0]);
+      return arr.map((i, n) => ({ ...i, rowNo: n + 1 }));
+    });
+  }
+
+  function moveByKeyboard(key: string, toKey: string | null) {
+    if (!toKey) return;
+    reorderItem(key, toKey);
+    // moving the row can drop the focus: put it back on its handle
+    setTimeout(() => tableRef.current?.querySelector<HTMLElement>(`[data-key="${key}"] [data-reorder]`)?.focus(), 0);
+  }
+
   function getRowKeyAtY(clientY: number): string | null {
     const rows = tableRef.current?.querySelectorAll<HTMLElement>("[data-key]");
     if (!rows) return null;
@@ -583,14 +603,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; }
           return;
         }
-        setItems((prev) => {
-          const from = prev.findIndex((i) => i._key === dragKey.current);
-          const to   = prev.findIndex((i) => i._key === targetKey);
-          if (from < 0 || to < 0) return prev;
-          const arr = [...prev];
-          arr.splice(to, 0, arr.splice(from, 1)[0]);
-          return arr.map((i, n) => ({ ...i, rowNo: n + 1 }));
-        });
+        reorderItem(dragKey.current, targetKey);
       }
       dragKey.current = null;
       setDragOverKey(null);
@@ -765,7 +778,11 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
   // navigation must skip over them there instead of landing on a dead cell.
   const firstEditableCol = showSourcing ? 4 : 1;
   const qtyCol = showSourcing ? 5 : 2;
-  const COLS = qtyCol + 1;
+  // an added row also has its Code (column 0) and Unit price (after qty); other rows have no input there
+  // and are skipped
+  const codeCol = 0;
+  const priceCol = qtyCol + 1;
+  const COLS = qtyCol + 2;
 
   function isColEnabled(rowIdx: number, colIdx: number): boolean {
     const it = items[rowIdx];
@@ -790,11 +807,11 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
       return false;
     };
     const focusFirstInRow = (r: number): boolean => {
-      for (let c = 1; c < COLS; c++) if (focus(r, c)) return true;
+      for (let c = 0; c < COLS; c++) if (focus(r, c)) return true;
       return false;
     };
     const focusLastInRow = (r: number): boolean => {
-      for (let c = COLS - 1; c >= 1; c--) if (focus(r, c)) return true;
+      for (let c = COLS - 1; c >= 0; c--) if (focus(r, c)) return true;
       return false;
     };
 
@@ -815,7 +832,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
           if (!focus(rowIdx + 1, colIdx)) focus(rowIdx + 1, firstEditableCol);
         } else {
           addLine();
-          setTimeout(() => focus(rowIdx + 1, firstEditableCol), 0);
+          // the new (added) row: its Code first
+          setTimeout(() => focusFirstInRow(rowIdx + 1), 0);
         }
         break;
       case "ArrowRight": {
@@ -830,7 +848,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         if (!isModifier) break;
         e.preventDefault();
         let moved = false;
-        for (let c = colIdx - 1; c >= 1; c--) { if (focus(rowIdx, c)) { moved = true; break; } }
+        for (let c = colIdx - 1; c >= 0; c--) { if (focus(rowIdx, c)) { moved = true; break; } }
         if (!moved && rowIdx > 0) focusLastInRow(rowIdx - 1);
         break;
       }
@@ -1151,6 +1169,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       )}
                     </span>
                     <button
+                      aria-label={`Remove customer PO ${c.customerPoNo}`}
                       className="text-muted-foreground hover:text-foreground mt-0.5 shrink-0"
                       onClick={(e) => { e.stopPropagation(); removeCpo(c.id); }}
                     >
@@ -1276,6 +1295,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     {[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}
                   </span>
                   <button
+                    aria-label="Remove customer"
                     onClick={() => { setSelectedCustomer(null); setCustOrgMemberId(undefined); }}
                     className="text-muted-foreground hover:text-foreground"
                   >
@@ -1376,8 +1396,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         {salesPersons.map((s) => (
                           <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                             {s.name}
-                            {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
-                            <button type="button" onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                            {s.isExt && <span className="relative -top-0.75 text-[0.625rem] font-bold leading-none">ext</span>}
+                            <button type="button" aria-label={`Remove ${s.name}`} onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
                           </span>
                         ))}
                         <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
@@ -1461,8 +1481,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                     const spSame = cpo._salesPersonInherited != null && cpo.salesPersonName === cpo._salesPersonInherited;
                     const dateSame = cpo._deliveryDateInherited != null && cpo.deliveryDate === cpo._deliveryDateInherited;
                     const addrSame = cpo._deliveryAddressInherited != null && (cpo.deliveryAddress ?? "") === cpo._deliveryAddressInherited;
-                    const tagFrom = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-2.5 h-2.5 shrink-0" />from CPO</span>;
-                    const tagEdited = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</span>;
+                    const tagFrom = <span className="inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-2.5 h-2.5 shrink-0" />from CPO</span>;
+                    const tagEdited = <span className="inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</span>;
                     return (
                       <tr key={cpo.id}>
                         <td className="py-2 pr-3 align-top">
@@ -1478,8 +1498,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                               {(cpoSalesPersons[cpo.id] ?? []).map((s) => (
                                 <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                                   {s.name}
-                                  {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: (prev[cpo.id] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                                  {s.isExt && <span className="relative -top-0.75 text-[0.625rem] font-bold leading-none">ext</span>}
+                                  <button type="button" aria-label={`Remove ${s.name}`} onClick={(e) => { e.stopPropagation(); setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: (prev[cpo.id] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
                                 </span>
                               ))}
                               <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
@@ -1824,6 +1844,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       {item._isAdditional ? (
                         // a row added on the SO: its code is typed in and looked up in the product list
                         <AddedRowCodeInput
+                          dataRow={rowIdx}
+                          dataCol={codeCol}
+                          onKeyDown={(e) => handleCellKeyDown(e, rowIdx, codeCol)}
                           value={item.productCode ?? ""}
                           onChange={(code) => updateItem(item._key, { productCode: code, productId: undefined })}
                           onResolved={(p, code) => updateItem(item._key, p ? {
@@ -1843,7 +1866,8 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
                       )}
                       <SrcTag src={item._codeSource} item={item} />
-                      {showSourcing && item.productCode?.trim() && (
+                      {/* any row Submit asks sourcing for: one with a description or a code */}
+                      {showSourcing && (item.description || item.productCode) && (
                         item.sourcingType ? (
                           <button
                             type="button"
@@ -1872,7 +1896,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           </button>
                         ) : (
                           <div className="mt-0.5 flex items-center gap-1">
-                            <span className="text-[9px] text-destructive">sourcing?</span>
+                            <span className="text-[0.625rem] text-destructive">sourcing?</span>
                             <button
                               type="button"
                               onClick={() => updateItem(item._key, { sourcingType: "trading" })}
@@ -1909,7 +1933,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           />
                           {item.sourcingType === "oem" && item._designBrandSource && (
                             <span
-                              className={`inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border ${
+                              className={`inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border ${
                                 item._designBrandSource === "catalog"
                                   ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
                                   : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"
@@ -1935,7 +1959,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                             currentUserName={currentUserName}
                           />
                           {item.sourcingType === "oem" && item.designBrandCode?.trim() && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
                               <PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO
                             </span>
                           )}
@@ -1952,12 +1976,12 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                           />
                           {item.sourcingType === "oem" && (
                             !item.privateLabelCode?.trim() ? (
-                              <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                              <span className="inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
                                 <AlertTriangleIcon className="w-2.5 h-2.5 shrink-0" />missing
                               </span>
                             ) : item._privateLabelSource ? (
                               <span
-                                className={`inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border ${
+                                className={`inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border ${
                                   item._privateLabelSource === "auto"
                                     ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
                                     : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"
@@ -2015,12 +2039,12 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       )}
                       {isNonStandard && (
                         <div className="flex items-center gap-1 mt-0.5">
-                          <span className="text-[9px] text-muted-foreground">Set:</span>
+                          <span className="text-[0.625rem] text-muted-foreground">Set:</span>
                           <input
                             value={(item as any).setGroupLabel || ""}
                             onChange={(e) => handleSetLabelChange(item._key, e.target.value)}
                             placeholder="(none)"
-                            className="h-5 w-36 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
+                            className="h-5 w-36 border border-border rounded px-1 text-[0.625rem] bg-background text-muted-foreground"
                           />
                         </div>
                       )}
@@ -2028,6 +2052,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         <div className="mt-1">
                           <button
                             type="button"
+                            title={item.sourceCustomerPoNo || undefined}
                             onClick={(e) => {
                               if (cpoPicker === item._key) {
                                 setCpoPicker(null);
@@ -2038,7 +2063,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                                 setCpoPicker(item._key);
                               }
                             }}
-                            className={`text-[9px] px-1 py-0.5 rounded border font-mono leading-tight break-all line-clamp-2 transition-colors ${
+                            className={`text-[0.625rem] px-1 py-0.5 rounded border font-mono leading-tight break-all line-clamp-2 transition-colors ${
                               item.sourceCustomerPoId
                                 ? "text-blue-700 border-blue-200 bg-blue-50 dark:text-blue-300 dark:border-blue-800 dark:bg-blue-950/40"
                                 : "text-muted-foreground border-dashed border-border/60 hover:border-border hover:bg-muted/50"
@@ -2077,6 +2102,9 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                         <AccountingInput
                           value={item.unitPrice ?? "0"}
                           onValueChange={(raw) => updateItem(item._key, { unitPrice: raw, _unitPriceSource: "so", _soEditedBy: currentUserName || "user" })}
+    data-row={rowIdx}
+    data-col={priceCol}
+    onKeyDown={(e) => handleCellKeyDown(e, rowIdx, priceCol)}
                           className="h-7 text-[11px] md:text-[11px] text-right text-red-500 dark:text-red-400"
                           placeholder="0.00"
                         />
@@ -2094,13 +2122,23 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       <div className="flex items-center gap-1.5">
                         <span
                           draggable
+                          role="button"
+                          tabIndex={0}
+                          data-reorder
+                          aria-label={`Move row ${item.rowNo}: use the up and down arrow keys`}
+                          onKeyDown={(e) => {
+                            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                            e.preventDefault();
+                            moveByKeyboard(item._key, keyboardMoveTarget(renderItems, rowIdx, e.key === "ArrowUp" ? -1 : 1, isNonStandard));
+                          }}
                           onDragStart={(e) => { dragKey.current = item._key; e.dataTransfer.effectAllowed = "move"; setIsDragging(true); }}
                           onDragEnd={() => { dragKey.current = null; setDragOverKey(null); setIsDragging(false); if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; } }}
-                          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                          className="cursor-grab active:cursor-grabbing rounded text-muted-foreground/40 hover:text-muted-foreground transition-colors outline-none focus-visible:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
                         >
                           <GripVerticalIcon className="w-3.5 h-3.5 shrink-0" />
                         </span>
                         <button
+                          aria-label={`Remove row ${item.rowNo}`}
                           type="button"
                           onClick={() => removeLine(item._key)}
                           disabled={items.length === 1}

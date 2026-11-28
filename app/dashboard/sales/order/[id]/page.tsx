@@ -5,7 +5,7 @@ import { getDeliveryOrdersBySoId, getSoItemDeliveredQtys } from "@/server/delive
 import { getPrsBySoId } from "@/server/purchase-requisition";
 import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { getOrganizationProfile } from "@/server/organization-profile";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { SalesOrderDetailClient } from "./so-detail-client";
 
 export default async function SalesOrderDetailPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ draft?: string }> }) {
@@ -19,7 +19,8 @@ export default async function SalesOrderDetailPage({ params, searchParams }: { p
     getOrganizationProfile().catch(() => null),
   ]);
 
-  if (!order) notFound();
+  // deleted (or never there): back to the list, which says so — not a 404
+  if (!order) redirect("/dashboard/sales/order?gone=1");
 
   const allQuotationIds = (() => {
     const linked = (order.linkedQuotations as { id: string }[] | null) ?? [];

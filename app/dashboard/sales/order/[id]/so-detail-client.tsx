@@ -39,6 +39,7 @@ import {
   Loader2Icon, TruckIcon, LinkIcon, PlusIcon, DatabaseIcon, FileSpreadsheetIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { needsSourcing, missingOemDetails, sourcingProblems } from "@/app/dashboard/sales/order/_shared/sourcing";
 import { refOf, useDbDescriptionLookup, type DbDescItem } from "@/lib/sales-order/use-db-descriptions";
 import { sameText } from "@/lib/sales-order/db-description";
 
@@ -155,6 +156,15 @@ export function SalesOrderDetailClient({
     ),
   );
   const [togglingApprovalReject, setTogglingApprovalReject] = useState<string | null>(null);
+  // rows the last Submit was stopped by
+  const [flaggedRows, setFlaggedRows] = useState<Set<string>>(() => new Set());
+
+  // bring the first of them (in table order) into view
+  useEffect(() => {
+    if (flaggedRows.size === 0) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.querySelector("[data-flagged]")?.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+  }, [flaggedRows]);
 
   // Sync with server-refreshed prop
   useEffect(() => {
@@ -229,16 +239,11 @@ export function SalesOrderDetailClient({
 
   async function handleSubmit() {
     if (showSourcing) {
-      const missingSourcing = order.items.find((i) => (i.description || i.productCode) && !i.sourcingType);
-      if (missingSourcing) {
-        toast.error(`Please select Trading or OEM sourcing for row ${missingSourcing.rowNo}`);
-        return;
-      }
-      const missingOem = order.items.find((i) => i.sourcingType === "oem" && (
-        !i.designBrandName?.trim() || !i.designBrandCode?.trim() || !i.privateLabelCode?.trim()
-      ));
-      if (missingOem) {
-        toast.error(`Please fill in Design Brand, Design Code and Emboss Code for row ${missingOem.rowNo}`);
+      // every row that stops the submit, not just the first: they're marked in the table
+      const problems = sourcingProblems(order.items);
+      setFlaggedRows(new Set(problems?.rows.map((i) => i.id)));
+      if (problems) {
+        toast.error(problems.message, showEdit ? { action: { label: "Edit", onClick: () => router.push(resolvedEditHref) } } : undefined);
         return;
       }
     }
@@ -314,6 +319,8 @@ export function SalesOrderDetailClient({
       setStatus("cancelled");
       toast.success("Sales order cancelled");
       router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't cancel the sales order");
     } finally {
       setActioning(null);
     }
@@ -417,7 +424,7 @@ export function SalesOrderDetailClient({
                 )}
                 {isOwner && can("sales-order:delete") && !deleteBlocker && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
-                    <TrashIcon className="w-3.5 h-3.5" /> Delete
+                    <TrashIcon className="w-3.5 h-3.5" /> {deleting ? "Deleting…" : "Delete"}
                   </Button>
                 )}
               </>
@@ -426,7 +433,7 @@ export function SalesOrderDetailClient({
                 <StatusBadge status={status} />
                 {isOwner && can("sales-order:delete") && !deleteBlocker && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleDelete} disabled={deleting}>
-                    <TrashIcon className="w-3.5 h-3.5" /> Delete
+                    <TrashIcon className="w-3.5 h-3.5" /> {deleting ? "Deleting…" : "Delete"}
                   </Button>
                 )}
               </>
@@ -704,9 +711,11 @@ export function SalesOrderDetailClient({
                         }
 
                         const isApprovalRejected = approvalRejectedItems.has(item.id);
+                        // a row that's been fixed since the last Submit loses its mark
+                        const flagged = flaggedRows.has(item.id) && (needsSourcing(item) || missingOemDetails(item));
                         const arCls = isApprovalRejected ? "line-through" : "";
                         rows.push(
-                          <tr key={item.id} className={cn("border-b border-border/40 last:border-0 transition-colors hover:brightness-[0.97] dark:hover:brightness-110", isApprovalRejected && "opacity-50", color ? color.row : "bg-background", isAdditional ? "text-red-500 dark:text-red-400" : "")}>
+                          <tr key={item.id} data-flagged={flagged || undefined} className={cn("border-b border-border/40 last:border-0 transition-colors hover:brightness-[0.97] dark:hover:brightness-110", isApprovalRejected && "opacity-50", color ? color.row : "bg-background", isAdditional ? "text-red-500 dark:text-red-400" : "", flagged && "bg-destructive/15 dark:bg-destructive/25")}>
                             <td className={`py-2 pl-4 pr-3 align-top ${arCls} ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.rowNo}</td>
                             <td className={`py-2 pr-3 align-top ${arCls}`}>
                               <div className={`font-mono ${isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.productCode || "—"}</div>
@@ -740,7 +749,7 @@ export function SalesOrderDetailClient({
                                   )}>
                                     {item.sourcingType === "oem" ? "OEM" : "Trading"}
                                   </span>
-                                ) : item.productCode?.trim() ? (
+                                ) : needsSourcing(item) ? (
                                   <span className="mt-0.5 inline-block text-[10px] px-1.5 py-0.5 rounded-md border border-destructive/40 text-destructive font-medium">
                                     sourcing?
                                   </span>
@@ -955,6 +964,7 @@ export function SalesOrderDetailClient({
                               <td className="py-2 pl-2 align-top">
                                 <button
                                   title={isApprovalRejected ? "Clear rejection" : "Reject this item"}
+                                  aria-label={isApprovalRejected ? `Clear rejection of item ${item.rowNo}` : `Reject item ${item.rowNo}`}
                                   disabled={togglingApprovalReject === item.id}
                                   onClick={() => handleToggleApprovalReject(item.id)}
                                   className={cn(
@@ -1505,7 +1515,7 @@ export function SalesOrderDetailClient({
                                 {effectiveSp && <span className="text-xs">{effectiveSp}</span>}
                                 {externalPersons.map((e) => (
                                   <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
-                                    {e.name}<span className="text-[9px] opacity-60 font-bold ml-0.5">ext</span>
+                                    {e.name}<span className="text-[0.625rem] opacity-60 font-bold ml-0.5">ext</span>
                                   </span>
                                 ))}
                               </div>
@@ -1541,7 +1551,7 @@ export function SalesOrderDetailClient({
                               {c.effectiveSp && <span className="text-xs">{c.effectiveSp}</span>}
                               {c.externalPersons.map((e) => (
                                 <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
-                                  {e.name}<span className="text-[9px] opacity-60 font-bold ml-0.5">ext</span>
+                                  {e.name}<span className="text-[0.625rem] opacity-60 font-bold ml-0.5">ext</span>
                                 </span>
                               ))}
                             </div>

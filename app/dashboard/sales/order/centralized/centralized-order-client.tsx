@@ -1,9 +1,11 @@
 "use client";
 
+import { GoneNotice } from "@/components/gone-notice";
 import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { SoTrailHover } from "../so-trail-hover";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { getSalesOrdersCentralized, type CentralizedSalesOrder } from "@/server/sales-order";
@@ -103,6 +105,7 @@ export function CentralizedSalesOrderClient({ initialOrders, categories = [] }: 
 
   return (
     <div className="p-6">
+      <GoneNotice what="sales order" />
       <PageHeader
         title="Centralized Sales Orders"
         description="Every Sales Order recorded across all organizations under the same owner"
@@ -127,7 +130,7 @@ export function CentralizedSalesOrderClient({ initialOrders, categories = [] }: 
             className="pl-9 h-9 text-sm"
           />
           {search && (
-            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+            <button type="button" aria-label="Clear search" onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
               <XIcon className="w-3.5 h-3.5" />
             </button>
           )}
@@ -190,7 +193,7 @@ export function CentralizedSalesOrderClient({ initialOrders, categories = [] }: 
             return (
               <SoTrailHover key={o.id} id={o.id} soNo={o.soNo} centralized>
               <div
-                className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                className="border border-border rounded-xl bg-background hover:bg-muted/20 transition-colors cursor-pointer has-[a:focus-visible]:ring-3 has-[a:focus-visible]:ring-ring/50"
                 onClick={() => router.push(`/dashboard/sales/order/centralized/${o.id}`)}
               >
                 <div className="flex items-center gap-3 px-4 py-3">
@@ -202,9 +205,15 @@ export function CentralizedSalesOrderClient({ initialOrders, categories = [] }: 
                     <div className="flex items-center gap-2 flex-wrap">
                       {/* the number, and its revision below it */}
                       <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
-                        <span className="font-mono text-sm font-medium">
-                        <Highlight text={o.soNo} query={search} />
-                        </span>
+                        {/* a real link, so the order opens from the keyboard and in a new tab */}
+                        <Link
+                          href={`/dashboard/sales/order/centralized/${o.id}`}
+                          prefetch={false}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-mono text-sm font-medium outline-none hover:underline underline-offset-4"
+                        >
+                          <Highlight text={o.soNo} query={search} />
+                        </Link>
                         <RevBadge revision={revs[o.id]} />
                       </span>
                       <StatusBadge status={o.status} />

@@ -5,7 +5,7 @@ import { hasAccess } from "@/lib/permissions/has-access";
 import { getOrgMembers } from "@/server/members";
 import { getOpenCustomerPos } from "@/server/customer-purchase-order";
 import { getOrganizationProfile } from "@/server/organization-profile";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { EditSalesOrderClient } from "./edit-order-client";
 
 export default async function EditSalesOrderPage({ params }: { params: Promise<{ id: string }> }) {
@@ -17,7 +17,8 @@ export default async function EditSalesOrderPage({ params }: { params: Promise<{
     getOpenCustomerPos().catch(() => []),
     getOrganizationProfile().catch(() => null),
   ]);
-  if (!order) notFound();
+  // deleted (or never there): back to the list, which says so — not a 404
+  if (!order) redirect("/dashboard/sales/order?gone=1");
   if (order.createdBy !== session.user.id) redirect(`/dashboard/sales/order/${id}`);
   if (order.status === "submitted" || order.status === "confirmed") {
     redirect(`/dashboard/sales/order/${id}`);

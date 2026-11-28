@@ -1,9 +1,11 @@
 "use client";
 
+import { GoneNotice } from "@/components/gone-notice";
 import { RevBadge, useRevisions } from "@/components/amendment-history";
 import { SoTrailHover } from "./so-trail-hover";
 import { SoStockChip } from "@/components/so-stock-chip";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/lib/store/use-app-store";
 import { toast } from "sonner";
@@ -145,6 +147,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
 
   return (
     <div className="p-6">
+      <GoneNotice what="sales order" />
       <PageHeader
         title="Sales Orders"
         description="Track and manage sales orders"
@@ -168,7 +171,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
           className="pl-9 h-9 text-sm"
         />
         {search && (
-          <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+          <button type="button" aria-label="Clear search" onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
             <XIcon className="w-3.5 h-3.5" />
           </button>
         )}
@@ -210,6 +213,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                 >
                   <input
                     type="checkbox"
+                    aria-label={`Select ${cpo.customerPoNo}`}
                     checked={checked}
                     onChange={() => toggleCpo(cpo.id)}
                     onClick={(e) => e.stopPropagation()}
@@ -311,7 +315,7 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
             return (
               <SoTrailHover key={o.id} id={o.id} soNo={o.soNo}>
               <div
-                className="flex overflow-hidden rounded-xl border border-border bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                className="flex overflow-hidden rounded-xl border border-border bg-background hover:bg-muted/20 transition-colors cursor-pointer has-[a:focus-visible]:ring-3 has-[a:focus-visible]:ring-ring/50"
                 onClick={() => router.push(`/dashboard/sales/order/${o.id}`)}
               >
                 {/* Status accent stripe */}
@@ -323,9 +327,15 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                     <div className="flex items-center gap-2 min-w-0">
                       {/* the number, and its revision below it */}
                       <span className="inline-flex flex-col items-start gap-0.5 leading-tight">
-                        <span className="font-mono text-sm font-semibold tracking-tight">
-                        <Highlight text={o.soNo} query={search} />
-                        </span>
+                        {/* a real link, so the order opens from the keyboard and in a new tab */}
+                        <Link
+                          href={`/dashboard/sales/order/${o.id}`}
+                          prefetch={false}
+                          onClick={(e) => e.stopPropagation()}
+                          className="font-mono text-sm font-semibold tracking-tight outline-none hover:underline underline-offset-4"
+                        >
+                          <Highlight text={o.soNo} query={search} />
+                        </Link>
                         <RevBadge revision={revs[o.id]} />
                       </span>
                       <StatusBadge status={o.status} />
@@ -400,13 +410,13 @@ export function SalesOrderListClient({ initialOrders, permissions, currentUserId
                     </div>
                     <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                       {can("sales-order:update") && EDITABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7"
+                        <Button variant="ghost" size="icon" className="w-7 h-7" aria-label={`Edit ${o.soNo}`}
                           onClick={() => router.push(`/dashboard/sales/order/${o.id}/edit`)}>
                           <PencilIcon className="w-3.5 h-3.5" />
                         </Button>
                       )}
                       {can("sales-order:delete") && DELETABLE_STATUSES.has(o.status) && o.createdBy === currentUserId && !deleteBlockers[o.id] && (
-                        <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive"
+                        <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive" aria-label={`Delete ${o.soNo}`}
                           disabled={deleting === o.id}
                           onClick={() => handleDelete(o.id, o.soNo)}>
                           <TrashIcon className="w-3.5 h-3.5" />

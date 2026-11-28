@@ -3,7 +3,7 @@ import { getSalesOrderDetailCentralized, updateSalesOrderCentralized } from "@/s
 import { getOrgMembers } from "@/server/members";
 import { getOpenCustomerPos } from "@/server/customer-purchase-order";
 import { getOrganizationProfile } from "@/server/organization-profile";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { EditSalesOrderClient } from "../../../[id]/edit/edit-order-client";
 
 export default async function CentralizedEditSalesOrderPage({ params }: { params: Promise<{ id: string }> }) {
@@ -15,7 +15,8 @@ export default async function CentralizedEditSalesOrderPage({ params }: { params
     getOpenCustomerPos().catch(() => []),
     getOrganizationProfile().catch(() => null),
   ]);
-  if (!data) notFound();
+  // deleted (or never there): back to the list, which says so — not a 404
+  if (!data) redirect("/dashboard/sales/order/centralized?gone=1");
   if (data.createdBy !== session.user.id) redirect(`/dashboard/sales/order/centralized/${id}`);
   if (data.status === "submitted" || data.status === "confirmed") {
     redirect(`/dashboard/sales/order/centralized/${id}`);

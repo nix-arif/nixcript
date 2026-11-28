@@ -283,14 +283,18 @@ export type SalesOrderWithItems = SalesOrderRow & SalesOrderMeta & { items: Sale
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
+// The user's own sales order started and never submitted (a draft reference, not a number), for New SO
+// to carry on with. Not someone else's, and not a recalled SO (status draft again, with its number).
 export async function getExistingDraftSo(): Promise<{ id: string; soNo: string } | null> {
-  const { orgId } = await requireAccess("sales-order:read");
-  const [row] = await db
+  const { orgId, userId } = await requireAccess("sales-order:read");
+  const rows = await db
     .select({ id: salesOrder.id, soNo: salesOrder.soNo })
     .from(salesOrder)
-    .where(and(eq(salesOrder.organizationId, orgId), eq(salesOrder.status, "draft")))
-    .limit(1);
-  return row ?? null;
+    // a new SO is "pending-do" / "pending-pr" until it's submitted; "draft" is one sent back
+    .where(and(eq(salesOrder.organizationId, orgId), inArray(salesOrder.status, ["draft", "pending-do", "pending-pr"]), eq(salesOrder.createdBy, userId)))
+    .orderBy(desc(salesOrder.updatedAt))
+    .limit(20);
+  return rows.find((r) => isDraftRef(r.soNo)) ?? null;
 }
 
 export async function searchConfirmedSalesOrders(

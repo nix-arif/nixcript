@@ -7,7 +7,7 @@ import { getUserPermissions } from "@/lib/permissions/get-user-permissions";
 import { db } from "@/db";
 import { organizationProfile } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { SalesOrderDetailClient } from "../../[id]/so-detail-client";
 
 export default async function CentralizedSalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -19,7 +19,8 @@ export default async function CentralizedSalesOrderDetailPage({ params }: { para
     getUserPermissions(session.user.id, session.session.activeOrganizationId!),
   ]);
 
-  if (!data) notFound();
+  // deleted (or never there): back to the list, which says so — not a 404
+  if (!data) redirect("/dashboard/sales/order/centralized?gone=1");
 
   const { organizationName, ...order } = data;
 

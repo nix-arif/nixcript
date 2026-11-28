@@ -2,6 +2,8 @@
 
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
+import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
+import { needsSourcing, missingOemDetails, sourcingProblems } from "@/app/dashboard/sales/order/_shared/sourcing";
 import { useApprovalRequired } from "@/lib/approvals/use-approval-required";
 import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect, useId } from "react";
@@ -428,9 +430,20 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   const itemsRef = useRef(items);
   useEffect(() => { itemsRef.current = items; }, [items]);
 
-  const [saving, setSaving] = useState(false);
+  // which save button is running, so only that one shows progress
+  const [savingAction, setSavingAction] = useState<"submit" | "draft" | "discard" | null>(null);
+  const saving = savingAction !== null;
   const interacted = useUserInteracted();
   const tableRef = useRef<HTMLTableElement>(null);
+  // rows the last Create & Submit was stopped by
+  const [flaggedRows, setFlaggedRows] = useState<Set<string>>(() => new Set());
+
+  // bring the first of them (in table order) into view
+  useEffect(() => {
+    if (flaggedRows.size === 0) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    tableRef.current?.querySelector("[data-flagged]")?.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+  }, [flaggedRows]);
 
   // ── Pre-select CPOs from props on mount ─────────────────────────────────────
   useEffect(() => {
@@ -1192,6 +1205,25 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   const dragRafId   = useRef<number | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
+  // moves one row to another's place (dragging and the arrow keys)
+  function reorderItem(fromKey: string, toKey: string) {
+    setItems((prev) => {
+      const from = prev.findIndex((i) => i._key === fromKey);
+      const to   = prev.findIndex((i) => i._key === toKey);
+      if (from < 0 || to < 0) return prev;
+      const arr = [...prev];
+      arr.splice(to, 0, arr.splice(from, 1)[0]);
+      return arr.map((i, n) => ({ ...i, rowNo: n + 1 }));
+    });
+  }
+
+  function moveByKeyboard(key: string, toKey: string | null) {
+    if (!toKey) return;
+    reorderItem(key, toKey);
+    // moving the row can drop the focus: put it back on its handle
+    setTimeout(() => tableRef.current?.querySelector<HTMLElement>(`[data-key="${key}"] [data-reorder]`)?.focus(), 0);
+  }
+
   function getRowKeyAtY(clientY: number): string | null {
     const rows = tableRef.current?.querySelectorAll<HTMLElement>("[data-key]");
     if (!rows) return null;
@@ -1239,14 +1271,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; }
           return;
         }
-        setItems((prev) => {
-          const from = prev.findIndex((i) => i._key === dragKey.current);
-          const to   = prev.findIndex((i) => i._key === targetKey);
-          if (from < 0 || to < 0) return prev;
-          const arr = [...prev];
-          arr.splice(to, 0, arr.splice(from, 1)[0]);
-          return arr.map((i, n) => ({ ...i, rowNo: n + 1 }));
-        });
+        reorderItem(dragKey.current, targetKey);
       }
       dragKey.current = null;
       setDragOverKey(null);
@@ -1270,7 +1295,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   // navigation must skip over them there instead of landing on a dead cell.
   const firstEditableCol = showSourcing ? 4 : 1;
   const qtyCol = showSourcing ? 5 : 2;
-  const COLS = qtyCol + 1;
+  // an added row also has its Code (column 0) and Unit price (after qty); other rows have no input there
+  // and are skipped
+  const codeCol = 0;
+  const priceCol = qtyCol + 1;
+  const COLS = qtyCol + 2;
 
   function isColEnabled(rowIdx: number, colIdx: number): boolean {
     const it = items[rowIdx];
@@ -1295,11 +1324,11 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
       return false;
     };
     const focusFirstInRow = (r: number): boolean => {
-      for (let c = 1; c < COLS; c++) if (focus(r, c)) return true;
+      for (let c = 0; c < COLS; c++) if (focus(r, c)) return true;
       return false;
     };
     const focusLastInRow = (r: number): boolean => {
-      for (let c = COLS - 1; c >= 1; c--) if (focus(r, c)) return true;
+      for (let c = COLS - 1; c >= 0; c--) if (focus(r, c)) return true;
       return false;
     };
 
@@ -1320,7 +1349,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
           if (!focus(rowIdx + 1, colIdx)) focus(rowIdx + 1, firstEditableCol);
         } else {
           addLine();
-          setTimeout(() => focus(rowIdx + 1, firstEditableCol), 0);
+          // the new (added) row: its Code first
+          setTimeout(() => focusFirstInRow(rowIdx + 1), 0);
         }
         break;
       case "ArrowRight": {
@@ -1335,7 +1365,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         if (!isModifier) break;
         e.preventDefault();
         let moved = false;
-        for (let c = colIdx - 1; c >= 1; c--) { if (focus(rowIdx, c)) { moved = true; break; } }
+        for (let c = colIdx - 1; c >= 0; c--) { if (focus(rowIdx, c)) { moved = true; break; } }
         if (!moved && rowIdx > 0) focusLastInRow(rowIdx - 1);
         break;
       }
@@ -1347,7 +1377,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   // strict = true for "Create & Submit" (enforces sourcing/OEM fields before
   // the order leaves draft); a plain "Save as Draft" skips those two checks
   // so an incomplete order can still be saved and finished later.
-  function buildInput(strict: boolean): { input: CreateSalesOrderInput; error?: undefined } | { input?: undefined; error: string } {
+  function buildInput(strict: boolean): { input: CreateSalesOrderInput; error?: undefined } | { input?: undefined; error: string; rows?: string[] } {
     if (linkedQuotations.length === 0) {
       return { error: "Please link at least one quotation" };
     }
@@ -1364,16 +1394,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     if (!primaryCustomerId) { return { error: "Please select a customer" }; }
     if (!items.some((i) => i.description || i.productCode)) { return { error: "Add at least one item" }; }
     if (strict && showSourcing) {
-      const missingSourcing = items.find((i) => (i.description || i.productCode) && !i.sourcingType);
-      if (missingSourcing) {
-        return { error: `Please select Trading or OEM sourcing for row ${missingSourcing.rowNo}` };
-      }
-      const missingOem = items.find((i) => i.sourcingType === "oem" && (
-        !i.designBrandName?.trim() || !i.designBrandCode?.trim() || !i.privateLabelCode?.trim()
-      ));
-      if (missingOem) {
-        return { error: `Please fill in Design Brand, Design Code and Emboss Code for row ${missingOem.rowNo}` };
-      }
+      const problems = sourcingProblems(items);
+      if (problems) return { error: problems.message, rows: problems.rows.map((i) => i._key) };
     }
     if (linkedCpos.length > 0) {
       for (const cpo of linkedCpos) {
@@ -1492,6 +1514,20 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   }
 
 
+  // As soon as the form opens: form=1 in its address, so the page, run again inside each auto-save,
+  // knows the form is open and doesn't redirect (create/page.tsx). Opened with draftId (a reload after
+  // it auto-saved): the draft exists — carry on there rather than start another.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const id = url.searchParams.get("draftId");
+    if (id && !draftRef.current) { router.replace(`/dashboard/sales/order/${id}/edit`); return; }
+    if (url.searchParams.get("form") !== "1") {
+      url.searchParams.set("form", "1");
+      window.history.replaceState(null, "", url);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Auto-save: the draft is created the first time the form can be saved, then kept up to date ──
   const draftRef = useRef<{ id: string; soNo: string } | null>(null);
   const [draft, setDraft] = useState<{ id: string; soNo: string } | null>(null);
@@ -1503,10 +1539,16 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     const so = await createSalesOrder(input);
     draftRef.current = { id: so.id, soNo: so.soNo };
     setDraft(draftRef.current);
+    // the page runs again after each save: draftId tells it this form made the draft, so it stays put
+    // instead of redirecting to it (app/dashboard/sales/order/create/page.tsx)
+    const url = new URL(window.location.href);
+    url.searchParams.set("draftId", so.id);
+    window.history.replaceState(null, "", url);
     return draftRef.current;
   }
   async function buildAndCreate(strict: boolean) {
     const r = buildInput(strict);
+    setFlaggedRows(new Set(r.error !== undefined ? r.rows : []));
     if (r.error !== undefined) { toast.error(r.error); return null; }
     await autoSave.flush(); // nothing in flight: no second draft
     const so = await saveDraft(r.input);
@@ -1515,7 +1557,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   }
 
   async function handleSave() {
-    setSaving(true);
+    setSavingAction("draft");
     try {
       const so = await buildAndCreate(false);
       if (!so) return;
@@ -1527,7 +1569,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     } catch (e: any) {
       toast.error(e.message);
     } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   }
 
@@ -1535,7 +1577,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
   const soNeedsApproval = useApprovalRequired("sales-order:approve");
 
   async function handleSaveAndSubmit() {
-    setSaving(true);
+    setSavingAction("submit");
     try {
       const so = await buildAndCreate(true);
       if (!so) return;
@@ -1545,7 +1587,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     } catch (e: any) {
       toast.error(e.message);
     } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   }
 
@@ -1562,15 +1604,17 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
     const d = draftRef.current;
     if (!d) { router.push("/dashboard/sales/order"); return; }
     if (!confirm(`Discard the draft ${d.soNo}? It will be deleted.`)) return;
-    setSaving(true);
+    setSavingAction("discard");
     try {
       await autoSave.flush();
       const res = await deleteSalesOrder(d.id);
       if (!res.ok) { toast.error(res.error); return; }
       toast.success("Draft discarded");
       router.push("/dashboard/sales/order");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't discard the draft");
     } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   }
 
@@ -1761,6 +1805,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-900/20">
                       <span className="text-sm font-mono font-medium text-violet-800 dark:text-violet-300 flex-1">{selectedOriginalSo.soNo}</span>
                       <button
+                        aria-label="Remove original sales order"
                         type="button"
                         onClick={() => { setSelectedOriginalSo(null); setOriginalSoSearch(""); setOriginalSoResults([]); }}
                         className="text-muted-foreground hover:text-foreground"
@@ -1877,6 +1922,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       )}
                     </span>
                     <button
+                      aria-label={`Remove customer PO ${c.customerPoNo}`}
                       className="text-muted-foreground hover:text-foreground mt-0.5 shrink-0"
                       onClick={(e) => { e.stopPropagation(); removeCpo(c.id); }}
                     >
@@ -1997,7 +2043,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       <span key={q.id} className="flex items-center gap-1 text-[11px] bg-muted border border-border/60 rounded-full px-2.5 py-1 font-mono">
                         <FileTextIcon className="w-3 h-3 text-muted-foreground" />
                         {q.quotationNo}
-                        <button onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
+                        <button aria-label={`Remove quotation ${q.quotationNo}`} onClick={() => removeLinkedQuotation(q.id)} className="text-muted-foreground hover:text-foreground ml-0.5">
                           <XIcon className="w-3 h-3" />
                         </button>
                       </span>
@@ -2031,7 +2077,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                             <div className="flex items-center gap-1.5">
                               <span className="text-sm font-mono font-medium">{qt.quotationNo}{alreadyLinked ? " (added)" : ""}</span>
                               {qt.isDummy === 1 && (
-                                <span className="text-[9px] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
+                                <span className="text-[0.625rem] font-medium px-1.5 py-0.5 rounded border border-muted-foreground/30 bg-muted text-muted-foreground">Dummy</span>
                               )}
                             </div>
                             {custName && <div className="text-[11px] text-muted-foreground">{custName}</div>}
@@ -2146,6 +2192,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     {[selectedCustomer.title, selectedCustomer.name].filter(Boolean).join(" ")}
                   </span>
                   <button
+                    aria-label="Remove customer"
                     onClick={() => { setSelectedCustomer(null); setCustOrgMemberId(undefined); }}
                     className="text-muted-foreground hover:text-foreground"
                   >
@@ -2257,8 +2304,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                             {qtSpList.map((s) => (
                               <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                                 {s.name}
-                                {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
-                                <button type="button" onClick={(e) => { e.stopPropagation(); setQtSalesPersons((prev) => ({ ...prev, [qtId]: (prev[qtId] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                                {s.isExt && <span className="relative -top-0.75 text-[0.625rem] font-bold leading-none">ext</span>}
+                                <button type="button" aria-label={`Remove ${s.name}`} onClick={(e) => { e.stopPropagation(); setQtSalesPersons((prev) => ({ ...prev, [qtId]: (prev[qtId] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
                               </span>
                             ))}
                             <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
@@ -2357,8 +2404,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         {salesPersons.map((s) => (
                           <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                             {s.name}
-                            {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
-                            <button type="button" onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                            {s.isExt && <span className="relative -top-0.75 text-[0.625rem] font-bold leading-none">ext</span>}
+                            <button type="button" aria-label={`Remove ${s.name}`} onClick={(e) => { e.stopPropagation(); setSalesPersons((prev) => prev.filter((x) => x.id !== s.id)); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
                           </span>
                         ))}
                         <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
@@ -2445,8 +2492,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                     const spSame = cpo._salesPersonInherited && cpo.salesPersonName === cpo._salesPersonInherited;
                     const dateSame = cpo._deliveryDateInherited && dateVal === cpo._deliveryDateInherited;
                     const addrSame = cpo._deliveryAddressInherited && (cpo.deliveryAddress ?? "") === cpo._deliveryAddressInherited;
-                    const tagFrom = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-2.5 h-2.5 shrink-0" />from CPO</span>;
-                    const tagEdited = <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</span>;
+                    const tagFrom = <span className="inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800"><LinkIcon className="w-2.5 h-2.5 shrink-0" />from CPO</span>;
+                    const tagEdited = <span className="inline-flex items-center gap-1 text-[0.625rem] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800"><PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO</span>;
                     return (
                       <tr key={cpo.id}>
                         <td className="py-2 pr-3 align-top">
@@ -2462,8 +2509,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                               {(cpoSalesPersons[cpo.id] ?? []).map((s) => (
                                 <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 rounded px-2 py-0.5 shrink-0">
                                   {s.name}
-                                  {s.isExt && <span className="relative -top-0.75 text-[8px] font-bold leading-none">ext</span>}
-                                  <button type="button" onClick={(e) => { e.stopPropagation(); setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: (prev[cpo.id] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
+                                  {s.isExt && <span className="relative -top-0.75 text-[0.625rem] font-bold leading-none">ext</span>}
+                                  <button type="button" aria-label={`Remove ${s.name}`} onClick={(e) => { e.stopPropagation(); setCpoSalesPersons((prev) => ({ ...prev, [cpo.id]: (prev[cpo.id] ?? []).filter((x) => x.id !== s.id) })); }} className="text-blue-500/60 hover:text-blue-700 ml-0.5"><XIcon className="w-3 h-3" /></button>
                                 </span>
                               ))}
                               <select value="" onClick={(e) => e.stopPropagation()} onChange={(e) => {
@@ -2813,17 +2860,23 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       </>
                     );
                   };
+                  // a row that's been fixed since the last Submit loses its mark
+                  const flagged = flaggedRows.has(item._key) && (needsSourcing(item) || missingOemDetails(item));
                   const itemRow = (
                   <tr
                     key={item._key}
                     data-key={item._key}
-                    className={`border-b border-border/50 last:border-0 ${isDragging ? "" : "transition-colors"} ${dragOverKey === item._key ? "border-t-2 border-t-primary" : ""} ${color ? color.row : "bg-background"} ${isDragging && dragKey.current === item._key ? "outline outline-2 outline-primary/40 outline-offset-[-1px]" : ""} ${item._isAdditional ? "text-red-500 dark:text-red-400" : ""}`}
+                    data-flagged={flagged || undefined}
+                    className={`border-b border-border/50 last:border-0 ${isDragging ? "" : "transition-colors"} ${dragOverKey === item._key ? "border-t-2 border-t-primary" : ""} ${flagged ? "bg-destructive/15 dark:bg-destructive/25" : color ? color.row : "bg-background"} ${isDragging && dragKey.current === item._key ? "outline outline-2 outline-primary/40 outline-offset-[-1px]" : ""} ${item._isAdditional ? "text-red-500 dark:text-red-400" : ""}`}
                   >
                     <td className={`py-1.5 pr-2 align-top ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"} ${color?.border ?? ""}`}><div className="h-7 flex items-center">{item.rowNo}</div></td>
                     <td className="py-1.5 pr-2 align-top">
                       {item._isAdditional ? (
                         // a row added on the SO: its code is typed in and looked up in the product list
                         <AddedRowCodeInput
+                          dataRow={rowIdx}
+                          dataCol={codeCol}
+                          onKeyDown={(e) => handleCellKeyDown(e, rowIdx, codeCol)}
                           value={item.productCode ?? ""}
                           onChange={(code) => updateItem(item._key, { productCode: code, productId: undefined })}
                           onResolved={(p, code) => updateItem(item._key, p ? {
@@ -2843,7 +2896,8 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         <div className="h-7 flex items-center text-[11px] font-mono">{item.productCode || "—"}</div>
                       )}
                       <Tag src={item._codeSource} />
-                      {showSourcing && item.productCode?.trim() && (
+                      {/* any row Submit asks sourcing for: one with a description or a code */}
+                      {showSourcing && (item.description || item.productCode) && (
                         item.sourcingType ? (
                           <button
                             type="button"
@@ -2873,7 +2927,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           </button>
                         ) : (
                           <div className="mt-0.5 flex items-center gap-1">
-                            <span className="text-[9px] text-destructive">sourcing?</span>
+                            <span className="text-[0.625rem] text-destructive">sourcing?</span>
                             <button
                               type="button"
                               onClick={() => updateItem(item._key, { sourcingType: "trading" })}
@@ -2914,7 +2968,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           {item.sourcingType === "oem" && item._designBrandSource && (
                             <span
                               className={cn(
-                                "inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border",
+                                "inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border",
                                 item._designBrandSource === "catalog"
                                   ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
                                   : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800",
@@ -2940,7 +2994,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                             currentUserName={currentUserName}
                           />
                           {item.sourcingType === "oem" && item.designBrandCode?.trim() && (
-                            <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
+                            <span className="inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800">
                               <PencilIcon className="w-2.5 h-2.5 shrink-0" />{currentUserName || "user"} edit SO
                             </span>
                           )}
@@ -2960,13 +3014,13 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           />
                           {item.sourcingType === "oem" && (
                             !item.privateLabelCode?.trim() ? (
-                              <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
+                              <span className="inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800">
                                 <AlertTriangleIcon className="w-2.5 h-2.5 shrink-0" />missing
                               </span>
                             ) : item._privateLabelSource ? (
                               <span
                                 className={cn(
-                                  "inline-flex items-center gap-1 mt-0.5 text-[9px] px-1.5 py-0.5 rounded-md border",
+                                  "inline-flex items-center gap-1 mt-0.5 text-[0.625rem] px-1.5 py-0.5 rounded-md border",
                                   item._privateLabelSource === "auto"
                                     ? "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800"
                                     : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800",
@@ -3024,12 +3078,12 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       )}
                       {soType === "urgent" && (
                         <div className="flex items-center gap-1 mt-0.5">
-                          <span className="text-[9px] text-muted-foreground">Set:</span>
+                          <span className="text-[0.625rem] text-muted-foreground">Set:</span>
                           <input
                             value={item.setGroupLabel}
                             onChange={(e) => handleSetLabelChange(item._key, e.target.value)}
                             placeholder="(none)"
-                            className="h-5 w-36 border border-border rounded px-1 text-[9px] bg-background text-muted-foreground"
+                            className="h-5 w-36 border border-border rounded px-1 text-[0.625rem] bg-background text-muted-foreground"
                           />
                         </div>
                       )}
@@ -3037,6 +3091,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                         <div className="mt-1">
                           <button
                             type="button"
+                            title={item.sourceCustomerPoNo || undefined}
                             onClick={(e) => {
                               if (cpoPicker === item._key) {
                                 setCpoPicker(null);
@@ -3047,7 +3102,7 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                                 setCpoPicker(item._key);
                               }
                             }}
-                            className={`text-[9px] px-1 py-0.5 rounded border font-mono leading-tight break-all line-clamp-2 transition-colors ${
+                            className={`text-[0.625rem] px-1 py-0.5 rounded border font-mono leading-tight break-all line-clamp-2 transition-colors ${
                               item.sourceCustomerPoId
                                 ? "text-blue-700 border-blue-200 bg-blue-50 dark:text-blue-300 dark:border-blue-800 dark:bg-blue-950/40"
                                 : "text-muted-foreground border-dashed border-border/60 hover:border-border hover:bg-muted/50"
@@ -3095,6 +3150,9 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                           <AccountingInput
                             value={item.unitPrice ?? "0"}
                             onValueChange={(raw) => updateItem(item._key, { unitPrice: raw, _unitPriceSource: "so", _soEditedBy: currentUserName || "user" })}
+    data-row={rowIdx}
+    data-col={priceCol}
+    onKeyDown={(e) => handleCellKeyDown(e, rowIdx, priceCol)}
                             className="h-7 text-[11px] md:text-[11px] text-right text-red-500 dark:text-red-400"
                             placeholder="0.00"
                           />
@@ -3134,13 +3192,23 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
                       <div className="flex items-center gap-1.5">
                         <span
                           draggable
+                          role="button"
+                          tabIndex={0}
+                          data-reorder
+                          aria-label={`Move row ${item.rowNo}: use the up and down arrow keys`}
+                          onKeyDown={(e) => {
+                            if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+                            e.preventDefault();
+                            moveByKeyboard(item._key, keyboardMoveTarget(renderItems, rowIdx, e.key === "ArrowUp" ? -1 : 1, soType !== "standard"));
+                          }}
                           onDragStart={(e) => { dragKey.current = item._key; e.dataTransfer.effectAllowed = "move"; setIsDragging(true); }}
                           onDragEnd={() => { dragKey.current = null; setDragOverKey(null); setIsDragging(false); if (dragRafId.current !== null) { cancelAnimationFrame(dragRafId.current); dragRafId.current = null; } }}
-                          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                          className="cursor-grab active:cursor-grabbing rounded text-muted-foreground/40 hover:text-muted-foreground transition-colors outline-none focus-visible:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
                         >
                           <GripVerticalIcon className="w-3.5 h-3.5 shrink-0" />
                         </span>
                         <button
+                          aria-label={`Remove row ${item.rowNo}`}
                           type="button"
                           onClick={() => removeLine(item._key)}
                           disabled={items.length === 1}
@@ -3222,14 +3290,14 @@ export function CreateSalesOrderClient({ members, cpo, cpos, openCpos = [], curr
         {/* ── Actions ── */}
         <div className="flex gap-3 pb-8">
           <Button onClick={handleSaveAndSubmit} disabled={saving} className="gap-2">
-            {saving ? "Creating…" : soNeedsApproval ? "Create & Submit" : "Create & Confirm"}
+            {savingAction === "submit" ? "Creating…" : soNeedsApproval ? "Create & Submit" : "Create & Confirm"}
           </Button>
           <Button variant="outline" onClick={handleSave} disabled={saving}>
-            Save as Draft
+            {savingAction === "draft" ? "Saving…" : "Save as Draft"}
           </Button>
           {draft ? (
             <Button variant="outline" onClick={handleDiscardDraft} disabled={saving} className="text-destructive hover:text-destructive">
-              Discard draft
+              {savingAction === "discard" ? "Discarding…" : "Discard draft"}
             </Button>
           ) : (
             <Button variant="outline" onClick={() => router.push("/dashboard/sales/order")}>
