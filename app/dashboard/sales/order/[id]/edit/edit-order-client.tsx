@@ -1,5 +1,6 @@
 "use client";
 
+import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -2071,7 +2072,17 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
                       <div className={`h-7 flex items-center text-[11px] px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}>{item.uom || "—"}</div>
                     </td>
                     <td className="py-1.5 pr-2 align-top">
-                      <div className={`h-7 flex items-center justify-end text-[11px] font-mono tabular-nums px-1 ${item._isAdditional ? "text-red-500 dark:text-red-400" : "text-foreground"}`}>{fmt(parseFloat(item.unitPrice ?? "0"))}</div>
+                      {item._isAdditional ? (
+                        // a row added on the SO: its unit price is entered here (the quotation's rows keep theirs)
+                        <AccountingInput
+                          value={item.unitPrice ?? "0"}
+                          onValueChange={(raw) => updateItem(item._key, { unitPrice: raw, _unitPriceSource: "so", _soEditedBy: currentUserName || "user" })}
+                          className="h-7 text-[11px] md:text-[11px] text-right text-red-500 dark:text-red-400"
+                          placeholder="0.00"
+                        />
+                      ) : (
+                        <div className={`h-7 flex items-center justify-end text-[11px] font-mono tabular-nums px-1 text-foreground`}>{fmt(parseFloat(item.unitPrice ?? "0"))}</div>
+                      )}
                       <SrcTag src={item._unitPriceSource} item={item} />
                     </td>
                     <td className="py-1.5 pr-2 align-top">
