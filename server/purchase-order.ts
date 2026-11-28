@@ -1,5 +1,6 @@
 "use server";
 
+import { lastPurchasePrices, type LastPrice } from "@/lib/procurement/last-price";
 import { cpoCategories, mapCategoriesToOrg, prCategories, resolveCategories, soCategories } from "@/lib/document-category/inherit";
 import { fillPurchaseOrderItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
@@ -371,6 +372,15 @@ export interface CreatePurchaseOrderInput {
   /** Document categories; undefined: its PR's / sales order's / customer POs' (on create) or unchanged (on update) */
   categoryIds?: string[];
   items: PurchaseOrderItemInput[];
+}
+
+// What we last paid for these products (lib/procurement/last-price.ts), to fill in a new supplier PO's
+// prices: this supplier's own last price first, else another supplier's (any currency: the form takes
+// only those in the PO's currency), else the catalog cost. { productCode: price }
+export async function getLastPurchasePrices(codes: string[], supplierId: string | null): Promise<Record<string, LastPrice>> {
+  const { orgId } = await requireAccess("purchase-order:create");
+  const prices = await lastPurchasePrices(await getOwnerOrgIds(orgId), codes.slice(0, 500), { supplierId });
+  return Object.fromEntries(prices);
 }
 
 // ── PR → PO conversion helper ─────────────────────────────────────────────

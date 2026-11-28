@@ -254,6 +254,8 @@ interface LineItem extends PrItemInput {
   _imagePresignedUrl?: string | null;
   _imageUploading?:  boolean;
   _descriptionSource?: "so" | "catalog" | "user";
+  /** where the estimated cost was filled in from ("PO/065-26 · Minaro Surgical · 2026-03-02", "catalog cost"); null once typed */
+  _priceSource?: string | null;
   _isAdditional?: boolean;
   _editedBy?: string | null;
   _soItemId?: string | null;
@@ -415,7 +417,8 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
         qty: i.qty,
         uom: i.uom,
         estimatedUnitCost: String(i.estimatedUnitCost ?? "0"),
-        currency: "MYR",
+        currency: i.currency ?? "MYR",
+        _priceSource: i.priceSource ?? null,
         _supplierId: undefined,
         _supplierName: undefined,
         _cpoId:                i.cpoId,
@@ -918,7 +921,10 @@ export function CreatePrClient({ initialSoId, openSos, currentUserName, orgAddre
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
-                      <AccountingInput value={line.estimatedUnitCost ?? "0"} onValueChange={(raw) => setLine(line._key, { estimatedUnitCost: raw })} className="h-7 text-xs" />
+                      <AccountingInput value={line.estimatedUnitCost ?? "0"} onValueChange={(raw) => setLine(line._key, { estimatedUnitCost: raw, _priceSource: null })} className="h-7 text-xs" />
+                      {line._priceSource && (
+                        <p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={line._priceSource === "catalog cost" ? "From the product's catalog cost price" : `What we last paid: ${line._priceSource}`}>{line._priceSource === "catalog cost" ? "catalog cost" : `last paid · ${line._priceSource}`}</p>
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-medium">
                       <span className="text-[10px] text-muted-foreground mr-0.5">{line.currency ?? "MYR"}</span>

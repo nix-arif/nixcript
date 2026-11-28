@@ -1,5 +1,6 @@
 "use server";
 
+import { lastPurchasePrices } from "@/lib/procurement/last-price";
 import { cpoCategories, mapCategoriesToOrg, resolveCategories, soCategories } from "@/lib/document-category/inherit";
 import { fillPurchaseRequisitionItemCustomers } from "@/lib/trace/item-customer";
 import { db } from "@/db";
@@ -727,12 +728,9 @@ export async function getSoItemsForPr(soId: string) {
     return null;
   }
 
-  // Enrich with product unit cost
-  const productIds = items.map((i) => i.productId).filter(Boolean) as string[];
-  const products = productIds.length > 0
-    ? await db.select({ id: product.id, costUnitPrice: product.costUnitPrice }).from(product).where(inArray(product.id, productIds))
-    : [];
-  const costMap = new Map(products.map((p) => [p.id, p.costUnitPrice]));
+  // Each line's estimated cost: what we last paid for it (lib/procurement/last-price.ts: the newest
+  // issued supplier PO of any of the owner's companies, else the catalog cost), in that price's currency
+  const prices = await lastPurchasePrices(await getOwnerOrgIds(orgId), items.map((i) => i.productCode));
 
   // What the SO's active PRs already ask for (quantity × sets, per product): only the rest is offered,
   // so a quantity raised by an amendment can still be requested
@@ -759,7 +757,10 @@ export async function getSoItemsForPr(soId: string) {
         // the SO line is for one set: buy for every set (the set keeps its name, as 1 lot)
         qty: soLineQtyText(i),
         uom: i.uom ?? "",
-        estimatedUnitCost: i.productId ? (costMap.get(i.productId) ?? "0") : "0",
+        estimatedUnitCost: (i.productCode && prices.get(i.productCode)?.unitPrice) || "0",
+        currency:          (i.productCode && prices.get(i.productCode)?.currency) || "MYR",
+        // where the estimate came from, e.g. "PO/065-26 · Minaro Surgical · 2026-03-02"
+        priceSource:       (() => { const p = i.productCode ? prices.get(i.productCode) : undefined; return !p ? null : p.source === "catalog" ? "catalog cost" : [p.poNo, p.supplierName, p.date].filter(Boolean).join(" · "); })(),
         cpoId:                cpoMatch?.cpoId                 ?? null,
         cpoNo:                cpoMatch?.cpoNo ?? i.sourceCustomerPoNo ?? null,
         // the customer saved on the sales order line (a CPO can combine several contacts); else the CPO's own customer

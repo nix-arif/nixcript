@@ -4,6 +4,7 @@ import { navigateBack } from "@/hooks/use-back";
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { getLastPurchasePrices } from "@/server/purchase-order";
 import { useAutoSave, useUserInteracted } from "@/lib/use-auto-save";
 import { AutoSaveStatus } from "@/components/auto-save-status";
 import * as XLSX from "xlsx";
@@ -54,6 +55,7 @@ import {
   useItemImageHandlers,
   useCleanupOrphanedImages,
   PoItemsTable,
+  calcLine,
 } from "../_shared/po-item-fields";
 
 interface ApprovedSo { id: string; soNo: string; customerName: string | null }
@@ -185,6 +187,54 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
         .map((pi) => prItemToLine(pi)),
     );
   }
+
+  // ── Prices: what we last paid (lib/procurement/last-price.ts) ──────────────────────────────────
+  // Once there's a supplier (and whenever it or the lines' codes change), each line the user hasn't
+  // priced takes this supplier's last price, else keeps the PR's estimate, else another supplier's last
+  // price in the PO's currency, else the catalog cost. A sibling company as supplier is priced by the
+  // intercompany rule on save instead. The PO's currency follows the supplier's prices.
+  const siblingSupplier = !!suppliers.find((s) => s.id === supplierId)?.linkedOrganizationId;
+  const priceCodes = [...new Set(items.map((i) => (i.productCode ?? "").trim()).filter(Boolean))].sort().join("|");
+  const pricedFor = useRef<string>("");
+  useEffect(() => {
+    if (!supplierId || siblingSupplier || !priceCodes) return;
+    const key = `${supplierId}|${priceCodes}`;
+    if (pricedFor.current === key) return;
+    pricedFor.current = key;
+    let live = true;
+    getLastPurchasePrices(priceCodes.split("|"), supplierId).then((prices) => {
+      if (!live) return;
+      const own = Object.values(prices).filter((p) => p.source === "supplier");
+      // the supplier's prices decide the currency when they agree on one
+      const ownCurrencies = [...new Set(own.map((p) => p.currency))];
+      const poCurrency = ownCurrencies.length === 1 ? ownCurrencies[0] : currency;
+      if (poCurrency !== currency) setCurrency(poCurrency);
+      let filled = 0;
+      setItems((prev) => prev.map((line) => {
+        if (line._priceTyped) return line;
+        const p = line.productCode ? prices[line.productCode.trim()] : undefined;
+        // the PR's estimate (or the SO's) counts only in the PO's currency: MYR 11.90 must not become USD 11.90
+        const estimate = Number(line.unitPrice || 0) > 0 && !line._priceSource && (line.currency ?? currency) === poCurrency;
+        const take = p && (p.source === "supplier" || (!estimate && p.currency === poCurrency)) ? p : null;
+        if (!take) {
+          if (estimate) return { ...line, currency: poCurrency };
+          // nothing in this currency: left for the user to price (rather than a number in the wrong currency)
+          const wrongCurrency = Number(line.unitPrice || 0) > 0;
+          return calcLine({ ...line, currency: poCurrency, unitPrice: wrongCurrency ? "0" : line.unitPrice, _priceSource: wrongCurrency ? `no ${poCurrency} price yet (the PR had ${line.currency} ${line.unitPrice})` : line._priceSource });
+        }
+        filled++;
+        return calcLine({
+          ...line,
+          unitPrice: take.unitPrice,
+          currency: poCurrency,
+          _priceSource: take.source === "catalog" ? "catalog cost" : [take.poNo, take.supplierName, take.date].filter(Boolean).join(" · "),
+        });
+      }));
+      if (filled > 0) toast.info(`Prices filled in from what was last paid (${filled} line${filled === 1 ? "" : "s"}). Check them before issuing.`, { duration: 6000 });
+    }).catch(() => {});
+    return () => { live = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierId, siblingSupplier, priceCodes]);
 
   // Auto-load items from SO when arriving with initialSoId (direct mode)
   useEffect(() => {
@@ -563,7 +613,7 @@ export function CreatePurchaseOrderClient({ suppliers, approvedSos = [], custome
       expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
       deliveryAddress: deliveryAddress || undefined,
       manualPoNo: !isPrMode && useManualPoNo ? manualPoNo.trim() : undefined,
-      items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, ...rest }) => rest),
+      items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, _priceTyped, _priceSource, ...rest }) => rest),
     } };
   }
 

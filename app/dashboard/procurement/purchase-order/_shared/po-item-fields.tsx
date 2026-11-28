@@ -47,6 +47,8 @@ export interface LineItem extends PurchaseOrderItemInput {
   _imageInherited?: boolean; // key came from PR — must not be deleted by PO form
   _cpoId?: string | null;
   _codeEditing?: boolean; // Code field stays an input while true — set on focus, cleared on blur
+  _priceTyped?: boolean; // the user typed the unit price: it's never filled in over
+  _priceSource?: string | null; // where a filled-in unit price came from ("PO/065-26 · Minaro Surgical · 2026-03-02")
 }
 
 export const newLine = (rowNo: number, key?: string): LineItem => ({
@@ -1109,10 +1111,15 @@ export function PoItemsTable({
                   <td className="px-2 py-1.5">
                     <AccountingInput
                       value={item.unitPrice ?? "0"}
-                      onValueChange={(raw) => updateItem(item._key, { unitPrice: raw })}
+                      onValueChange={(raw) => updateItem(item._key, { unitPrice: raw, _priceTyped: true, _priceSource: null })}
                       className="h-7 text-xs"
                       placeholder="0.00"
                     />
+                    {item._priceSource && (
+                      <p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={item._priceSource === "catalog cost" ? "From the product's catalog cost price" : item._priceSource.startsWith("no ") ? "Enter this line's price" : `What we last paid: ${item._priceSource}`}>
+                        {item._priceSource === "catalog cost" || item._priceSource.startsWith("no ") ? item._priceSource : `last paid · ${item._priceSource}`}
+                      </p>
+                    )}
                   </td>
 
                   {/* Total */}

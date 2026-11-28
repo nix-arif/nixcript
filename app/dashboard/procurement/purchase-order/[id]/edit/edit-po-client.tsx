@@ -269,7 +269,7 @@ export function EditPurchaseOrderClient({
       notes: notes || undefined,
       expectedDeliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
       deliveryAddress: deliveryAddress || undefined,
-      items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, ...rest }) => rest),
+      items: items.map(({ _key, _imageFile, _imageUploading, _imagePreviewUrl, _imageInherited, _cpoId, _codeEditing, _priceTyped, _priceSource, ...rest }) => rest),
     };
   }
 
