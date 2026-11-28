@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { needsSourcing, missingOemDetails, sourcingProblems } from "@/app/dashboard/sales/order/_shared/sourcing";
+import { isExternalPerson } from "@/app/dashboard/sales/order/_shared/sales-persons";
 import { refOf, useDbDescriptionLookup, type DbDescItem } from "@/lib/sales-order/use-db-descriptions";
 import { sameText } from "@/lib/sales-order/db-description";
 
@@ -1509,7 +1510,7 @@ export function SalesOrderDetailClient({
                                 {effectiveSp && <span className="text-xs">{effectiveSp}</span>}
                                 {externalPersons.map((e) => (
                                   <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
-                                    {e.name}<span className="text-[0.625rem] opacity-60 font-bold ml-0.5">ext</span>
+                                    {e.name}{isExternalPerson(e) && <span className="text-[0.625rem] opacity-60 font-bold ml-0.5">ext</span>}
                                   </span>
                                 ))}
                               </div>
@@ -1545,7 +1546,7 @@ export function SalesOrderDetailClient({
                               {c.effectiveSp && <span className="text-xs">{c.effectiveSp}</span>}
                               {c.externalPersons.map((e) => (
                                 <span key={e.id} className="inline-flex items-center gap-0.5 text-[10px] bg-muted border border-border rounded px-1.5 py-0.5">
-                                  {e.name}<span className="text-[0.625rem] opacity-60 font-bold ml-0.5">ext</span>
+                                  {e.name}{isExternalPerson(e) && <span className="text-[0.625rem] opacity-60 font-bold ml-0.5">ext</span>}
                                 </span>
                               ))}
                             </div>

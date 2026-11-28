@@ -4,6 +4,7 @@ import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AccountingInput } from "@/components/ui/accounting-input";
 import { AddedRowCodeInput } from "@/app/dashboard/sales/order/_shared/added-row-code";
 import { keyboardMoveTarget } from "@/app/dashboard/sales/order/_shared/keyboard-move";
+import { orderAssociates } from "@/app/dashboard/sales/order/_shared/sales-persons";
 import { navigateBack, navigateBackAfterDelete } from "@/hooks/use-back";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -907,9 +908,7 @@ export function EditSalesOrderClient({ order, members, currentUserName, openCpos
         : (salesPersons[0]?.name || undefined),
       associateSalesPersons: (() => {
         if (linkedCpos.length > 0) {
-          const seen = new Set<string>();
-          const all = linkedCpos.flatMap((c) => (cpoSalesPersons[c.id] ?? []).slice(1).map(({ id, name }) => ({ id, name })))
-            .filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
+          const all = orderAssociates(linkedCpos.map((c) => cpoSalesPersons[c.id] ?? []));
           return all.length > 0 ? all : undefined;
         }
         return salesPersons.length > 1 ? salesPersons.slice(1).map(({ id, name }) => ({ id, name })) : undefined;
