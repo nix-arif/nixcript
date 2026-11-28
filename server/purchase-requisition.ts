@@ -24,7 +24,7 @@ import {
 } from "@/db/schema";
 import { getCachedSession } from "@/lib/auth/cached-session";
 import { newDraftRef, isDraftRef } from "@/lib/draft-ref";
-import { soLineSets, soLineQty, soLineQtyText } from "@/lib/sales-order/set-qty";
+import { prLineQty, soLineSets, soLineQty } from "@/lib/sales-order/set-qty";
 import { prCoveredQty, remainingPerLine } from "@/lib/purchase-requisition/coverage";
 import { nanoid } from "nanoid";
 import { eq, and, desc, asc, inArray, notInArray, isNotNull, isNull, ne, ilike, or } from "drizzle-orm";
@@ -346,7 +346,7 @@ export async function createPurchaseRequisition(input: CreatePrInput): Promise<P
         estimatedUnitCost: i.estimatedUnitCost ?? "0",
         currency: i.currency ?? "MYR",
         totalEstimatedCost: (
-          soLineQty(i) * parseFloat(i.estimatedUnitCost ?? "0") // × the number of sets
+          prLineQty(i) * parseFloat(i.estimatedUnitCost ?? "0") // a PR line is its total
         ).toFixed(2),
         preferredSupplierId: i.preferredSupplierId ?? null,
         preferredSupplierName: i.preferredSupplierName ?? null,
@@ -426,7 +426,7 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
         estimatedUnitCost: i.estimatedUnitCost ?? "0",
         currency: i.currency ?? "MYR",
         totalEstimatedCost: (
-          soLineQty(i) * parseFloat(i.estimatedUnitCost ?? "0") // × the number of sets
+          prLineQty(i) * parseFloat(i.estimatedUnitCost ?? "0") // a PR line is its total
         ).toFixed(2),
         preferredSupplierId: i.preferredSupplierId ?? null,
         preferredSupplierName: i.preferredSupplierName ?? null,
@@ -771,16 +771,8 @@ export async function getSoItemsForPr(soId: string) {
   const remaining = remainingPerLine(live, (await prCoveredQty(orgId, [soId])).get(soId));
   const filteredItems = live
     .filter((i) => (remaining.get(i.id) ?? 0) > 1e-9)
-    // a line partly covered: the part still to request. In a set it stays per set (× the SO's sets) when
-    // it divides evenly; otherwise the line is the total, its set as 1 lot
-    .map((i) => {
-      const left = remaining.get(i.id)!;
-      if (Math.abs(left - soLineQty(i)) <= 1e-9) return i;
-      const sets = soLineSets(i);
-      if (i.setGroupId && sets > 1 && Math.abs(left / sets - Math.round(left / sets)) < 1e-9)
-        return { ...i, qty: String(Math.round(left / sets)) };
-      return { ...i, qty: String(Number(left.toFixed(4))), setQty: i.setGroupId ? "1" : i.setQty };
-    });
+    // what is still to request, as a total (a line partly covered: the rest)
+    .map((i) => ({ ...i, _total: remaining.get(i.id)! }));
 
   return {
     soNo: so.soNo,
@@ -792,9 +784,8 @@ export async function getSoItemsForPr(soId: string) {
         productId: i.productId ?? undefined,
         productCode: i.productCode ?? "",
         description: i.description ?? "",
-        // as on the SO: a line in a set is for one set, and the set carries how many (the PR's totals, its
-        // coverage of the SO and its supplier PO all multiply them: lib/sales-order/set-qty.ts)
-        qty: i.qty ?? "1",
+        // the total to buy (the SO line × its sets): a PR line is its total (lib/sales-order/set-qty.ts)
+        qty: Number.isInteger(i._total) ? String(i._total) : String(Number(i._total.toFixed(4))),
         uom: i.uom ?? "",
         estimatedUnitCost: (i.productCode && prices.get(i.productCode)?.unitPrice) || "0",
         currency:          (i.productCode && prices.get(i.productCode)?.currency) || "MYR",
@@ -809,7 +800,7 @@ export async function getSoItemsForPr(soId: string) {
         editedBy:             i.editedBy ?? null,
         setGroupId:           i.setGroupId ?? null,
         setGroupLabel:        i.setGroupLabel ?? null,
-        setQty:               i.setGroupId ? (i.setQty ?? "1") : null,
+        setQty:               i.setGroupId ? String(soLineSets(i)) : null, // the SO's sets, shown only ("2 sets")
       };
     }),
   };

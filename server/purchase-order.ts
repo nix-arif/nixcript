@@ -479,7 +479,7 @@ export async function getPrForPoConversion(prId: string): Promise<PrForPoConvers
         productId: i.productId ?? null,
         productCode: i.productCode ?? null,
         description: i.description ?? null,
-        qty: soLineQtyText(i), // a PR line in a set is for one set: order for every set
+        qty: i.qty ?? "1", // a PR line is the total to buy (lib/sales-order/set-qty.ts prLineQty)
         uom: i.uom ?? null,
         estimatedUnitCost: i.estimatedUnitCost ?? "0",
         currency: i.currency ?? "MYR",

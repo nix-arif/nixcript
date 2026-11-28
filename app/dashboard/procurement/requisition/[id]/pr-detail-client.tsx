@@ -26,7 +26,6 @@ import {
 } from "@/server/purchase-requisition";
 import { getProductByCode } from "@/server/products";
 import { useAutoSave } from "@/lib/use-auto-save";
-import { soLineSets } from "@/lib/sales-order/set-qty";
 import { AutoSaveStatus } from "@/components/auto-save-status";
 import { hasAccess } from "@/lib/permissions/has-access";
 import { Button } from "@/components/ui/button";
@@ -237,10 +236,9 @@ interface EditLine extends PrItemInput {
   _setQty?: string | null;
 }
 
-// a line in a set is for one set: × the number of sets
+// a PR line is the total to buy (its set's count is only shown: lib/sales-order/set-qty.ts prLineQty)
 function calcTotal(item: EditLine): number {
-  const sets = soLineSets({ setGroupId: item._setGroupId, setQty: item._setQty });
-  return (parseFloat(item.qty || "1") || 1) * sets * (parseFloat(item.estimatedUnitCost || "0") || 0);
+  return (parseFloat(item.qty || "1") || 1) * (parseFloat(item.estimatedUnitCost || "0") || 0);
 }
 
 function toEditLine(item: PrWithItems["items"][number]): EditLine {
@@ -773,18 +771,14 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
                                 placeholder="Set name"
                                 className="h-6 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 font-medium text-blue-700 dark:text-blue-300 w-40"
                               />
-                              <span className="text-[10px] text-muted-foreground">×</span>
-                              <input
-                                type="number" min="1" value={qty}
-                                onChange={(e) => { const v = e.target.value; setLines((prev) => prev.map((l) => l._setGroupId === gid ? { ...l, _setQty: v } : l)); }}
-                                className="h-6 w-14 border border-blue-200 dark:border-blue-700 rounded px-2 text-xs bg-background outline-none focus:ring-1 focus:ring-blue-400 text-right"
-                              />
-                              <span className="text-[10px] text-muted-foreground">sets</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border font-mono text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700 bg-white/40 dark:bg-black/20" title="The sales order's number of sets. Each line below is the total to buy for all of them.">({qty} set{qty === "1" ? "" : "s"})</span>
+                              <span className="text-[10px] text-muted-foreground">quantities are totals</span>
                             </>
                           ) : (
                             <>
                               <span className="text-[11px] font-semibold text-blue-700 dark:text-blue-300">{label || "Set"}</span>
-                              <span className="text-[10px] px-1.5 py-0.5 rounded border font-mono text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700 bg-white/40 dark:bg-black/20">× {qty} sets</span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded border font-mono text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700 bg-white/40 dark:bg-black/20" title="The sales order's number of sets. Each line below is the total to buy for all of them.">({qty} set{qty === "1" ? "" : "s"})</span>
+                              <span className="text-[10px] text-muted-foreground">quantities are totals</span>
                             </>
                           )}
                         </div>

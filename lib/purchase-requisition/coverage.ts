@@ -1,4 +1,5 @@
-// How much of a sales order's lines its PRs already ask for, per product code (quantity × sets).
+// How much of a sales order's lines its PRs already ask for, per product code (a PR line is its total;
+// an SO line is quantity × sets).
 // A line is "covered" only as far as that quantity goes: when an amendment raises a quantity, the
 // rest is still to request (it used to be skipped once the product was on any PR).
 // Server-only (reads the database).
@@ -6,7 +7,7 @@
 import { and, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { purchaseRequisition, purchaseRequisitionItem } from "@/db/schema";
-import { soLineQty } from "@/lib/sales-order/set-qty";
+import { prLineQty, soLineQty } from "@/lib/sales-order/set-qty";
 
 const norm = (c: string | null | undefined) => (c ?? "").trim().toLowerCase();
 
@@ -34,7 +35,7 @@ export async function prCoveredQty(orgId: string, soIds: string[]): Promise<Map<
     const code = norm(r.productCode);
     if (!r.soId || !code) continue;
     const m = out.get(r.soId) ?? new Map<string, number>();
-    m.set(code, (m.get(code) ?? 0) + soLineQty(r));
+    m.set(code, (m.get(code) ?? 0) + prLineQty(r)); // a PR line is its total
     out.set(r.soId, m);
   }
   return out;
