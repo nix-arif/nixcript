@@ -14,6 +14,8 @@ import {
   rejectPurchaseRequisition,
   cancelPurchaseRequisition,
   deletePurchaseRequisition,
+  recallPurchaseRequisition,
+  purchaseRequisitionBlockers,
   updatePurchaseRequisition,
   searchSuppliersForPr,
   type PrWithItems,
@@ -32,7 +34,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/page-header";
 import {
   ArrowLeftIcon, PencilIcon, TrashIcon, SendIcon, CheckIcon, XIcon, PlusIcon, LinkIcon, ImageIcon,
-  DatabaseIcon, ShoppingCartIcon, LayersIcon,
+  DatabaseIcon, ShoppingCartIcon, LayersIcon, Undo2Icon,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useArrowFieldNav } from "@/hooks/use-arrow-field-nav";
@@ -292,6 +294,19 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
   const canApprove = can("purchase-requisition:approve") && pr.status === "submitted";
   const canCancel = can("purchase-requisition:update") && !["draft", "ordered", "cancelled"].includes(pr.status);
   const canDelete = can("purchase-requisition:delete") && pr.status === "draft";
+  // Recall: an approved PR back to draft to change it (approved again after), while no supplier PO has
+  // been issued from it; its draft supplier POs are discarded (server/purchase-requisition.ts)
+  const canRecall = can("purchase-requisition:approve") && pr.status === "approved";
+  const [blockers, setBlockers] = useState<Awaited<ReturnType<typeof purchaseRequisitionBlockers>>>(null);
+  useEffect(() => {
+    if (!canRecall && !canCancel) return;
+    let live = true;
+    purchaseRequisitionBlockers(pr.id).then((b) => { if (live) setBlockers(b); }).catch(() => {});
+    return () => { live = false; };
+  }, [pr.id, pr.status, canRecall, canCancel]);
+  const draftNote = (verb: string) => blockers?.drafts.length
+    ? `\n\nIts draft supplier PO${blockers.drafts.length > 1 ? "s" : ""} (${blockers.drafts.join(", ")}) will be ${verb}: ${blockers.drafts.length > 1 ? "they were" : "it was"} made from the PR as it is now.`
+    : "";
 
   async function act(key: string, fn: () => Promise<void>) {
     setActioning(key);
@@ -320,8 +335,18 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
     });
   }
 
+  async function handleRecall() {
+    if (blockers?.recall) { toast.error(blockers.recall, { duration: 8000 }); return; }
+    if (!confirm(`Recall ${pr.prNo} to draft so it can be changed?\n\nIt keeps its number, lines and links, and needs to be submitted and approved again.${draftNote("deleted")}`)) return;
+    await act("recall", async () => {
+      const res = await recallPurchaseRequisition(pr.id);
+      if (!res.ok) throw new Error(res.error);
+      toast.success(`${pr.prNo} is a draft again: edit it, then submit it for approval.`, { duration: 8000 });
+    });
+  }
+
   async function handleCancel() {
-    if (!confirm("Cancel this requisition?")) return;
+    if (!confirm(`Cancel this requisition? It can't be used again: to change it, Recall it instead.${draftNote("deleted too")}`)) return;
     await act("cancel", async () => {
       const res = await cancelPurchaseRequisition(pr.id);
       if (!res.ok) throw new Error(res.error);
@@ -489,6 +514,12 @@ export function PrDetailClient({ pr, permissions, currentUserId, currentUserName
                   <XIcon className="w-3.5 h-3.5" /> {actioning === "reject" ? "Returning…" : "Return for Revision"}
                 </Button>
               </>
+            )}
+            {canRecall && !editing && (
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleRecall} disabled={!!actioning}
+                title={blockers?.recall ?? "Back to draft to change it; it is approved again after"}>
+                <Undo2Icon className="w-3.5 h-3.5" /> {actioning === "recall" ? "Recalling…" : "Recall to edit"}
+              </Button>
             )}
             {canCancel && !editing && (
               <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleCancel} disabled={!!actioning}>

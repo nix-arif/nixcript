@@ -1,5 +1,6 @@
 "use server";
 
+import { discardDraftPosOfPr, posOfPr } from "@/lib/purchase-order/draft-pos";
 import { lastPurchasePrices } from "@/lib/procurement/last-price";
 import { cpoCategories, mapCategoriesToOrg, resolveCategories, soCategories } from "@/lib/document-category/inherit";
 import { fillPurchaseRequisitionItemCustomers } from "@/lib/trace/item-customer";
@@ -450,22 +451,11 @@ export async function updatePurchaseRequisition(input: UpdatePrInput): Promise<P
 type ActionResult = { ok: true } | { ok: false; error: string };
 
 // POs raised from this PR — every one (includeCancelled) or only live ones.
-async function posFromPr(orgId: string, prId: string, includeCancelled: boolean): Promise<string[]> {
-  const rows = await db
-    .select({ poNo: purchaseOrder.poNo, prNo: purchaseOrder.prNo, status: purchaseOrder.status })
-    .from(purchaseOrder)
-    .where(and(
-      eq(purchaseOrder.organizationId, orgId),
-      eq(purchaseOrder.purchaseRequisitionId, prId),
-      ...(includeCancelled ? [] : [ne(purchaseOrder.status, "cancelled")]),
-    ));
-  return rows.map((r) => `PO ${r.poNo ?? r.prNo ?? "(unnumbered)"}${r.status === "cancelled" ? " (cancelled)" : ""}`);
-}
 
 // Why each action can't be taken on this PR, or null when it can. Status
 // rules first, then what was raised from it. Shared by the actions below and
 // the fulfilment trail, so the two never disagree.
-export async function purchaseRequisitionBlockers(prId: string): Promise<{ recall: string | null; cancel: string | null; delete: string | null } | null> {
+export async function purchaseRequisitionBlockers(prId: string): Promise<{ recall: string | null; cancel: string | null; delete: string | null; drafts: string[] } | null> {
   const { orgId } = await requireAccess("purchase-requisition:read");
   const [pr] = await db
     .select({ prNo: purchaseRequisition.prNo, status: purchaseRequisition.status })
@@ -476,17 +466,20 @@ export async function purchaseRequisitionBlockers(prId: string): Promise<{ recal
 }
 
 async function prBlockers(orgId: string, prId: string, pr: { prNo: string; status: string }) {
-  const live = await posFromPr(orgId, prId, false);
-  const any = live.length > 0 ? live : await posFromPr(orgId, prId, true);
-  const liveMsg = (verb: string) => `Can't ${verb} ${pr.prNo} — POs raised from it are still active: ${live.join(", ")}. Cancel those first.`;
+  // only an issued supplier PO holds the PR: a draft (auto-saved, never sent) is discarded with it
+  const { drafts, issued, cancelled } = await posOfPr(orgId, prId);
+  const live = issued.map((p) => `PO ${p.poNo ?? "(unnumbered)"}`);
+  const any = [...issued, ...cancelled, ...drafts].map((p) => `PO ${p.poNo ?? "(unnumbered)"}${p.status === "cancelled" ? " (cancelled)" : ""}`);
+  const liveMsg = (verb: string) => `Can't ${verb} ${pr.prNo} — supplier POs issued from it are still active: ${live.join(", ")}. Cancel those first.`;
   return {
     recall: pr.status !== "approved" ? `Only an approved requisition can be recalled (this one is ${pr.status})`
       : live.length > 0 ? liveMsg("recall") : null,
-    cancel: ["ordered", "cancelled"].includes(pr.status) && live.length > 0 ? liveMsg("cancel")
-      : pr.status === "cancelled" ? `${pr.prNo} is already cancelled`
+    cancel: pr.status === "cancelled" ? `${pr.prNo} is already cancelled`
       : live.length > 0 ? liveMsg("cancel") : null,
     delete: pr.status !== "draft" ? `Only a draft requisition can be deleted (this one is ${pr.status}) — cancel it instead`
       : any.length > 0 ? `Can't delete ${pr.prNo} — POs were raised from it (${any.join(", ")}). Cancel it instead.` : null,
+    /** the draft supplier POs that recalling or cancelling discards */
+    drafts: drafts.map((d) => d.poNo ?? d.id),
   };
 }
 
@@ -527,9 +520,12 @@ export async function recallPurchaseRequisition(id: string): Promise<ActionResul
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "You can't recall this requisition" };
   }
+  // the draft supplier POs were made from it as it was: discarded (a new one is made after it's approved again)
+  await discardDraftPosOfPr(orgId, id);
   await db.update(purchaseRequisition).set({ status: "draft", approvedBy: null, approvedAt: null }).where(eq(purchaseRequisition.id, id));
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");
+  revalidatePath("/dashboard/procurement/purchase-order");
   return { ok: true };
 }
 
@@ -590,7 +586,9 @@ export async function cancelPurchaseRequisition(id: string): Promise<ActionResul
   if (!pr) return { ok: false, error: "Purchase requisition not found" };
   const blocked = (await prBlockers(orgId, id, pr)).cancel;
   if (blocked) return { ok: false, error: blocked };
+  await discardDraftPosOfPr(orgId, id); // its draft supplier POs go too
   await db.update(purchaseRequisition).set({ status: "cancelled" }).where(eq(purchaseRequisition.id, id));
+  revalidatePath("/dashboard/procurement/purchase-order");
   revalidatePath(`/dashboard/procurement/requisition/${id}`);
   revalidatePath("/dashboard/procurement/requisition");
   return { ok: true };
